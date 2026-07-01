@@ -1,0 +1,32 @@
+# Python / notebooks
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local secrets
+.env
+.env.*
+*.pem
+*.key
+secrets.*
+
+# Training and evaluation artifacts
+outputs/
+checkpoints/
+adapter/
+merged_model/
+final_metrics.json
+batch_id.txt
+annotations.json
+scores*.npy
+selected_indices.npy
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
