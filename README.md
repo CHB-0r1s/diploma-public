@@ -28,7 +28,8 @@
    RHO / reducible loss: proxy IL-модель обучается на `D_ho`, затем top-90k выбираются из disjoint `D_pool` по `L_base - L_IL`.
 
 4. [`selection_ifd.ipynb`](notebooks/selection_ifd.ipynb)  
-   IFD selection: top-90k по `IFD = PPL(y|x) / PPL(y)` на assistant-токенах.
+   IFD selection: top-90k по `IFD = PPL(y|x) / PPL(y)` на assistant-токенах.  
+   Скоринг и отбор вынесены в компаньон-модуль [`ifd_select.py`](notebooks/ifd_select.py) (`IFDSelector`): подаёшь готовые `(model, tok)` — получаешь IFD-скоры и индексы top-K, с резюмируемым кешем скоров. Ядро model-agnostic, дефолтные chat-маркеры под Qwen-2.5.
 
 5. [`selection_quality_classifier.ipynb`](notebooks/selection_quality_classifier.ipynb)  
    Quality classifier: Claude-labeled 3k subset -> Qwen2.5-0.5B quality scorer -> top-90k quality selection.
