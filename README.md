@@ -132,15 +132,3 @@ pytest -q                   # 15 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
-
-## Что не включено
-
-В публичный строгий набор намеренно не входят:
-
-- `baseline_full.ipynb` и `baseline_masked.ipynb`: ранние baseline-версии на instruct-модели и старом режиме `30k x 3`.
-- `selection_template.ipynb`: шаблон/промежуточная заготовка.
-- `eval_ru_mt_bench.ipynb`: lightweight custom LLM-as-a-judge контур; он не является официальным FastChat judge loop.
-- `step*.md`, `implementation_plan.md`: рабочие планы и промежуточные заметки.
-- любые `outputs/`, adapters, checkpoints, метрики, annotations и batch ids.
-
-Дополнительные проверки см. в [`COLAB_VERSION_AUDIT.md`](COLAB_VERSION_AUDIT.md) и [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md).
