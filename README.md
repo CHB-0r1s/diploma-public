@@ -5,17 +5,10 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-<!-- Place this tag where you want the buttons to render (GitHub Buttons — https://buttons.github.io/). -->
-<a class="github-button" href="https://github.com/CHB-0r1s/diploma-public" data-icon="octicon-star" data-show-count="true" aria-label="Star CHB-0r1s/diploma-public on GitHub">Star</a>
-<a class="github-button" href="https://github.com/CHB-0r1s/diploma-public/fork" data-icon="octicon-repo-forked" data-show-count="true" aria-label="Fork CHB-0r1s/diploma-public on GitHub">Fork</a>
-<a class="github-button" href="https://github.com/CHB-0r1s/diploma-public/subscription" data-icon="octicon-eye" data-show-count="true" aria-label="Watch CHB-0r1s/diploma-public on GitHub">Watch</a>
-<a class="github-button" href="https://github.com/CHB-0r1s" data-show-count="true" aria-label="Follow @CHB-0r1s on GitHub">Follow @CHB-0r1s</a>
-<!-- Place this tag in your head or just before your close body tag. -->
-<script async defer src="https://buttons.github.io/buttons.js"></script>
-
-Эта папка содержит финальные версии тетрадок для дипломной работы по сравнению стратегий отбора данных для SFT русскоязычной LLM. Тетрадки очищены от outputs, execution counts и временной metadata, чтобы их можно было безопасно перенести в публичный GitHub-репозиторий.
-
-Источник: локальный репозиторий `/Users/boris/Documents/diploma/CHB-0r1s-diploma`, commit `5510fe0`.
+[![Star](https://img.shields.io/github/stars/CHB-0r1s/diploma-public?style=social)](https://github.com/CHB-0r1s/diploma-public)
+[![Fork](https://img.shields.io/github/forks/CHB-0r1s/diploma-public?style=social)](https://github.com/CHB-0r1s/diploma-public/fork)
+[![Watch](https://img.shields.io/github/watchers/CHB-0r1s/diploma-public?style=social)](https://github.com/CHB-0r1s/diploma-public/subscription)
+[![Follow](https://img.shields.io/github/followers/CHB-0r1s?style=social&label=Follow)](https://github.com/CHB-0r1s)
 
 ## Схема эксперимента
 
