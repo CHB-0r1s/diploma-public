@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ifd-select"
+version = "0.1.0"
+description = "Микро-либа для отбора данных SFT по IFD (Instruction-Following Difficulty)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "CHB-0r1s" }]
+keywords = ["llm", "sft", "data-selection", "ifd", "qwen"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.23",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+progress = ["tqdm>=4.65"]
+dev = ["ruff>=0.5", "build>=1.2", "nbformat>=5.9", "pytest>=7.4"]
+
+[project.urls]
+Homepage = "https://github.com/CHB-0r1s/diploma-public"
+Repository = "https://github.com/CHB-0r1s/diploma-public"
+
+[tool.setuptools]
+package-dir = { "" = "notebooks" }
+py-modules = ["ifd_select"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ifd_select"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
