@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install tooling
+        run: python -m pip install --upgrade pip ruff build nbformat pytest numpy
+
+      - name: Ruff lint
+        run: ruff check notebooks/ifd_select.py tests/
+
+      - name: Byte-compile module
+        run: python -m compileall -q notebooks/ifd_select.py
+
+      - name: Run pytest
+        run: pytest tests/ -q
+
+      - name: Validate notebooks (nbformat)
+        run: |
+          python - <<'PY'
+          import glob, nbformat
+          nbs = glob.glob("notebooks/*.ipynb")
+          assert nbs, "no notebooks found"
+          for path in nbs:
+              nbformat.validate(nbformat.read(path, as_version=4))
+              print(f"OK  {path}")
+          PY
+
+      - name: Build package
+        run: python -m build
