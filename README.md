@@ -121,27 +121,71 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 17 тестов
+pytest -q                   # 25 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
 
-## Экспериментальный runner
+## Экспериментальный pipeline
 
-Для перепрогона экспериментов добавлен первый thin-runner для random baseline: Hydra-конфиг + TRL/Unsloth training + W&B logging/artifacts.
+Новый эталонный перепрогон разделён на три независимые W&B job type:
+
+```text
+select -> versioned selection artifact -> train -> LoRA adapter -> evaluate -> common metrics
+```
+
+Метод отбора выбирается только в `scripts/select_data.py`. `scripts/train.py` не знает, как были получены индексы: он проверяет artifact и обучается на всех 90 000 выбранных примерах без собственного 95/5 split и без выбора best checkpoint по method-dependent val. `scripts/evaluate.py` отдельно считает assistant-only loss/PPL на общем no-leak holdout.
+
+Selection artifact содержит точный Hugging Face dataset commit, fingerprint, границы common holdout и общего 200k pool, seed, pool-relative индексы и SHA256. Все стадии сохраняют resolved Hydra config и environment snapshot. Training по умолчанию автоматически продолжает последний `checkpoint-*` из output directory.
+
+Установка:
 
 ```bash
-pip install -e ".[experiments]"
 pip install unsloth
+pip install -e ".[experiments]"
 wandb login
-
-python scripts/train.py
 ```
 
-Smoke-прогон:
+### Smoke pipeline
 
 ```bash
-python scripts/train.py debug=true max_steps=5 wandb.mode=offline selection.subsample_size=128 dataset.eval_samples=16
+python scripts/select_data.py \
+  selection=random \
+  selection.pool_size=1024 \
+  selection.subsample_size=128 \
+  selection_output_dir=selections/smoke_random_128
+
+python scripts/train.py \
+  experiment_name=smoke_random_qwen15b \
+  selection_artifact=selections/smoke_random_128/selection_manifest.json \
+  output_dir=outputs/smoke_random_qwen15b \
+  max_steps=5
+
+python scripts/evaluate.py \
+  experiment_name=smoke_random_qwen15b \
+  selection_artifact=selections/smoke_random_128/selection_manifest.json \
+  adapter_path=outputs/smoke_random_qwen15b/adapter \
+  output_dir=outputs/smoke_random_qwen15b \
+  dataset.common_eval_samples=16
 ```
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), QLoRA-параметры — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Runner сохраняет `config.resolved.json`, `environment.json`, `dataset_metadata.json`, split artifacts (`common_val_indices.npy`, `selected_indices.npy`) и LoRA adapter artifact в W&B.
+### Полный random baseline
+
+```bash
+python scripts/select_data.py \
+  selection=random \
+  selection_output_dir=selections/random_90000
+
+python scripts/train.py \
+  experiment_name=baseline_random_qwen15b_90k \
+  selection_artifact=selections/random_90000/selection_manifest.json \
+  output_dir=outputs/baseline_random_qwen15b_90k
+
+python scripts/evaluate.py \
+  experiment_name=baseline_random_qwen15b_90k \
+  selection_artifact=selections/random_90000/selection_manifest.json \
+  adapter_path=outputs/baseline_random_qwen15b_90k/adapter \
+  output_dir=outputs/baseline_random_qwen15b_90k
+```
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

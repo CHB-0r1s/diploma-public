@@ -6,18 +6,21 @@ defaults:
 experiment_name: baseline_random_qwen15b_90k
 seed: 42
 output_dir: outputs/${experiment_name}
+selection_output_dir: selections/${selection.method}_${selection.subsample_size}
+selection_artifact: null
+adapter_path: null
+evaluation_output_dir: ${output_dir}/evaluation
 debug: false
 max_steps: -1
+resume_from_checkpoint: auto
 
 dataset:
   name: d0rj/ru-instruct
   split: train
   revision: null
   conversation_column: conversations
-  val_size: 0.05
   common_val_holdout_size: 4500
-  eval_samples: 500
-  final_eval_samples: 200
+  common_eval_samples: 4500
 
 model:
   name: Qwen/Qwen2.5-1.5B
@@ -46,9 +49,8 @@ wandb:
   entity: null
   group: diploma-rerun
   tags:
-    - baseline
-    - random
     - qlora
     - qwen2.5
+    - reproducible-rerun
   mode: null
   log_model: false

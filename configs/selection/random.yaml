@@ -1,4 +1,4 @@
 method: random
 subsample_size: 90000
-pool_limit: null
-
+pool_size: 200000
+seed: 42

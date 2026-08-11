@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+build/
+dist/
+*.egg-info/
 
 # Local secrets
 .env
@@ -14,6 +17,7 @@ secrets.*
 
 # Training and evaluation artifacts
 outputs/
+selections/
 wandb/
 checkpoints/
 adapter/

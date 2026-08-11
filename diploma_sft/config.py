@@ -12,10 +12,8 @@ class DatasetConfig:
     split: str = "train"
     revision: Optional[str] = None
     conversation_column: str = "conversations"
-    val_size: float = 0.05
     common_val_holdout_size: int = 4_500
-    eval_samples: int = 500
-    final_eval_samples: int = 200
+    common_eval_samples: int = 4_500
 
 
 @dataclass
@@ -56,11 +54,9 @@ class TrainConfig:
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "cosine"
     logging_steps: int = 20
-    eval_steps: int = 200
     save_steps: int = 400
     save_total_limit: int = 2
     packing: bool = True
-    eval_packing: bool = False
     train_on_responses_only: bool = True
 
 
@@ -68,7 +64,8 @@ class TrainConfig:
 class SelectionConfig:
     method: str = "random"
     subsample_size: int = 90_000
-    pool_limit: Optional[int] = None
+    pool_size: int = 200_000
+    seed: int = 42
 
 
 @dataclass
@@ -77,7 +74,7 @@ class WandbConfig:
     project: str = "diploma-sft"
     entity: Optional[str] = None
     group: Optional[str] = None
-    tags: List[str] = field(default_factory=lambda: ["baseline", "sft"])
+    tags: List[str] = field(default_factory=lambda: ["qlora", "qwen2.5", "reproducible-rerun"])
     mode: Optional[str] = None
     log_model: bool = False
 
@@ -87,8 +84,13 @@ class ExperimentConfig:
     experiment_name: str = "baseline_random_qwen15b_90k"
     seed: int = 42
     output_dir: str = "outputs/${experiment_name}"
+    selection_output_dir: str = "selections/${selection.method}_${selection.subsample_size}"
+    selection_artifact: Optional[str] = None
+    adapter_path: Optional[str] = None
+    evaluation_output_dir: str = "${output_dir}/evaluation"
     debug: bool = False
     max_steps: int = -1
+    resume_from_checkpoint: Optional[str] = "auto"
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     lora: LoraConfig = field(default_factory=LoraConfig)
