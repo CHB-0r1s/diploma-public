@@ -121,7 +121,7 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 17 тестов
+pytest -q                   # 19 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.

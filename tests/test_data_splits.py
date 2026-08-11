@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from diploma_sft.config import compute_warmup_steps
 from diploma_sft.data import random_baseline_indices
 
 
@@ -23,3 +24,11 @@ def test_random_baseline_indices_raises_when_dataset_too_small():
             common_val_holdout_size=10,
             subsample_size=20,
         )
+
+
+def test_compute_warmup_steps_uses_max_steps_for_smoke_run():
+    assert compute_warmup_steps(128, 4, 2, 1, 5, 0.03) == 1
+
+
+def test_compute_warmup_steps_uses_full_training_schedule():
+    assert compute_warmup_steps(90_000, 4, 2, 1, -1, 0.03) == 338

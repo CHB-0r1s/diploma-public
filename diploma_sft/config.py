@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -95,6 +96,24 @@ class ExperimentConfig:
     train: TrainConfig = field(default_factory=TrainConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
+
+
+def compute_warmup_steps(
+    train_examples: int,
+    batch_size: int,
+    gradient_accumulation_steps: int,
+    num_epochs: float,
+    max_steps: int,
+    warmup_ratio: float,
+) -> int:
+    """Resolve a warmup ratio to steps for the single-GPU training protocol."""
+    if max_steps > 0:
+        total_steps = max_steps
+    else:
+        batches_per_epoch = math.ceil(train_examples / batch_size)
+        updates_per_epoch = math.ceil(batches_per_epoch / gradient_accumulation_steps)
+        total_steps = math.ceil(updates_per_epoch * num_epochs)
+    return math.ceil(total_steps * warmup_ratio)
 
 
 def to_plain_dict(cfg: Any) -> Dict[str, Any]:
