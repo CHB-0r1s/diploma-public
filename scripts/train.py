@@ -26,7 +26,7 @@ except ModuleNotFoundError as exc:
         'python -m pip install -e ".[experiments]"'
     ) from exc
 
-from diploma_sft.config import compute_warmup_steps, to_plain_dict  # noqa: E402
+from diploma_sft.config import to_plain_dict  # noqa: E402
 from diploma_sft.data import load_random_baseline_split, save_split_artifacts  # noqa: E402
 from diploma_sft.runtime import environment_snapshot, require_bf16_cuda  # noqa: E402
 from diploma_sft.wandb_utils import init_wandb, log_files_as_artifact  # noqa: E402
@@ -93,14 +93,6 @@ def main(cfg: DictConfig) -> None:
 
     eval_subset = ds_split["test"].select(range(min(cfg.dataset.eval_samples, len(ds_split["test"]))))
     report_to = ["wandb"] if cfg.wandb.enabled else []
-    warmup_steps = compute_warmup_steps(
-        train_examples=len(ds_split["train"]),
-        batch_size=cfg.train.per_device_train_batch_size,
-        gradient_accumulation_steps=cfg.train.gradient_accumulation_steps,
-        num_epochs=cfg.train.num_epochs,
-        max_steps=cfg.max_steps,
-        warmup_ratio=cfg.train.warmup_ratio,
-    )
     training_args = SFTConfig(
         output_dir=str(output_dir),
         num_train_epochs=cfg.train.num_epochs,
@@ -109,7 +101,8 @@ def main(cfg: DictConfig) -> None:
         optim=cfg.train.optim,
         learning_rate=cfg.train.learning_rate,
         lr_scheduler_type=cfg.train.lr_scheduler_type,
-        warmup_steps=warmup_steps,
+        # A float below 1 is resolved against the post-packing training steps.
+        warmup_steps=cfg.train.warmup_ratio,
         bf16=precision["bf16"],
         fp16=precision["fp16"],
         max_length=cfg.model.max_seq_len,
