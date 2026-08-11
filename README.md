@@ -121,7 +121,27 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 15 тестов
+pytest -q                   # 17 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
+
+## Экспериментальный runner
+
+Для перепрогона экспериментов добавлен первый thin-runner для random baseline: Hydra-конфиг + TRL/Unsloth training + W&B logging/artifacts.
+
+```bash
+pip install -e ".[experiments]"
+pip install unsloth
+wandb login
+
+python scripts/train.py
+```
+
+Smoke-прогон:
+
+```bash
+python scripts/train.py debug=true max_steps=5 wandb.mode=offline selection.subsample_size=128 dataset.eval_samples=16
+```
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), QLoRA-параметры — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Runner сохраняет `config.resolved.json`, `environment.json`, `dataset_metadata.json`, split artifacts (`common_val_indices.npy`, `selected_indices.npy`) и LoRA adapter artifact в W&B.

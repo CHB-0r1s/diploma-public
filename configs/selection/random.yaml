@@ -1,0 +1,4 @@
+method: random
+subsample_size: 90000
+pool_limit: null
+

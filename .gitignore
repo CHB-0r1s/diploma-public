@@ -14,6 +14,7 @@ secrets.*
 
 # Training and evaluation artifacts
 outputs/
+wandb/
 checkpoints/
 adapter/
 merged_model/

@@ -1,0 +1,54 @@
+defaults:
+  - selection: random
+  - train: qwen15b_qlora
+  - _self_
+
+experiment_name: baseline_random_qwen15b_90k
+seed: 42
+output_dir: outputs/${experiment_name}
+debug: false
+max_steps: -1
+
+dataset:
+  name: d0rj/ru-instruct
+  split: train
+  revision: null
+  conversation_column: conversations
+  val_size: 0.05
+  common_val_holdout_size: 4500
+  eval_samples: 500
+  final_eval_samples: 200
+
+model:
+  name: Qwen/Qwen2.5-1.5B
+  chat_template: qwen-2.5
+  max_seq_len: 2048
+  load_in_4bit: true
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.0
+  bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+wandb:
+  enabled: true
+  project: diploma-sft
+  entity: null
+  group: diploma-rerun
+  tags:
+    - baseline
+    - random
+    - qlora
+    - qwen2.5
+  mode: null
+  log_model: false
+
