@@ -14,6 +14,8 @@ class DatasetConfig:
     conversation_column: str = "conversations"
     common_val_holdout_size: int = 4_500
     common_eval_samples: int = 4_500
+    train_audit_samples: int = 1_000
+    train_audit_seed: int = 42
 
 
 @dataclass
@@ -54,8 +56,8 @@ class TrainConfig:
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "cosine"
     logging_steps: int = 20
-    save_steps: int = 400
-    save_total_limit: int = 2
+    save_steps: int = 200
+    save_total_limit: int = 13
     packing: bool = True
     train_on_responses_only: bool = True
 
@@ -66,6 +68,10 @@ class SelectionConfig:
     subsample_size: int = 90_000
     pool_size: int = 200_000
     seed: int = 42
+    scorer_model: str = "Qwen/Qwen2.5-1.5B"
+    batch_size: int = 8
+    ifd_threshold: float = 1.0
+    checkpoint_every: int = 10_000
 
 
 @dataclass

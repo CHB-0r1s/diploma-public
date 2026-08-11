@@ -49,6 +49,22 @@ def random_pool_indices(pool_size: int, selected_count: int, seed: int) -> np.nd
     return np.sort(rng.choice(pool_size, size=selected_count, replace=False)).astype(np.int64)
 
 
+def train_audit_pool_indices(
+    selected_indices: np.ndarray,
+    sample_limit: int,
+    seed: int,
+) -> np.ndarray:
+    """Choose a deterministic audit sample in selection-pool coordinates."""
+    if sample_limit <= 0:
+        raise ValueError("train audit sample_limit must be positive")
+    audit_size = min(int(sample_limit), len(selected_indices))
+    rng = np.random.default_rng(seed)
+    selected_positions = np.sort(
+        rng.choice(len(selected_indices), size=audit_size, replace=False)
+    )
+    return selected_indices[selected_positions].astype(np.int64, copy=False)
+
+
 def render_chat_dataset(dataset: Any, tokenizer: Any, conversation_column: str, desc: str) -> Any:
     """Render a conversational dataset to fixed ChatML text."""
 
@@ -149,3 +165,35 @@ def load_common_evaluation_dataset(
         "rendered_fingerprint": getattr(rendered, "_fingerprint", None),
     }
     return rendered, metadata
+
+
+def load_train_audit_dataset(
+    manifest: Dict[str, Any],
+    selected_indices: np.ndarray,
+    tokenizer: Any,
+    sample_limit: int,
+    seed: int,
+) -> Tuple[Any, Dict[str, Any], np.ndarray]:
+    """Load a deterministic audit sample from the selected training rows."""
+    dataset = load_dataset_from_manifest(manifest)
+    layout = manifest["layout"]
+    shuffled = dataset.shuffle(seed=int(layout["shuffle_seed"]))
+    pool_start = int(layout["pool_start"])
+    pool_size = int(layout["pool_size"])
+    pool = shuffled.select(range(pool_start, pool_start + pool_size))
+
+    audit_pool_indices = train_audit_pool_indices(selected_indices, sample_limit, seed)
+    audit = pool.select(audit_pool_indices.tolist())
+    rendered = render_chat_dataset(
+        audit,
+        tokenizer=tokenizer,
+        conversation_column=manifest["dataset"]["conversation_column"],
+        desc="render selected-train audit sample",
+    )
+    metadata = {
+        "train_audit_rows": len(rendered),
+        "train_audit_seed": int(seed),
+        "train_audit_fingerprint": getattr(audit, "_fingerprint", None),
+        "rendered_fingerprint": getattr(rendered, "_fingerprint", None),
+    }
+    return rendered, metadata, audit_pool_indices.astype(np.int64, copy=False)

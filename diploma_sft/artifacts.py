@@ -66,6 +66,30 @@ def validate_adapter_lineage(adapter_dir: Path, selection_indices_sha256: str) -
     return manifest
 
 
+def prepare_scoring_cache_manifest(
+    output_dir: Path,
+    scoring_protocol: Dict[str, Any],
+    cache_filenames: Tuple[str, ...],
+) -> Dict[str, Any]:
+    """Bind resumable score files to one immutable scoring protocol."""
+    payload = {
+        "scoring_protocol": scoring_protocol,
+        "scoring_protocol_sha256": sha256_json(scoring_protocol),
+        "cache_files": list(cache_filenames),
+    }
+    path = output_dir / "scoring_cache_manifest.json"
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            existing = json.load(stream)
+        if existing != payload:
+            raise RuntimeError("Score cache belongs to a different scoring protocol")
+    elif any((output_dir / name).exists() for name in cache_filenames):
+        raise RuntimeError("Score cache files exist without scoring_cache_manifest.json")
+    with path.open("w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, ensure_ascii=False)
+    return payload
+
+
 def write_selection_artifact(
     output_dir: Path,
     selected_indices: np.ndarray,

@@ -79,14 +79,14 @@ def test_select_all_nan_raises():
 
 # --------------------------------------------------------------- assistant parsing
 
-def test_assistant_positions_finds_all_segments():
+def test_assistant_positions_keeps_only_final_segment():
     sel = make_selector()
     #                0  1  2  3  4  5  6  7  8  9 10
     ids = [3, 5, 1, 2, 7, 8, 3, 9, 1, 2, 4]
     #  seg1: asst[1,2]@2 → targets ids[4],ids[5] → logit-позиции 3,4, стоп на user[3]@6
     #  seg2: asst[1,2]@8 → target ids[10] → logit-позиция 9 (до конца, user не найден)
     positions = sel._assistant_positions(ids, valid_len=len(ids))
-    assert positions == {3, 4, 9}
+    assert positions == {9}
 
 
 def test_assistant_positions_no_marker_is_empty():

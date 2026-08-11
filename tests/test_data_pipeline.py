@@ -5,11 +5,16 @@ import pytest
 
 from diploma_sft.artifacts import (
     load_selection_artifact,
+    prepare_scoring_cache_manifest,
     prepare_training_run_manifest,
     validate_adapter_lineage,
     write_selection_artifact,
 )
-from diploma_sft.data import random_pool_indices, validate_dataset_layout
+from diploma_sft.data import (
+    random_pool_indices,
+    train_audit_pool_indices,
+    validate_dataset_layout,
+)
 from diploma_sft.evaluation import assistant_token_mask
 from diploma_sft.runtime import latest_checkpoint
 
@@ -46,6 +51,17 @@ def test_random_pool_indices_are_deterministic_unique_and_in_bounds():
 def test_random_pool_indices_reject_invalid_selection_size():
     with pytest.raises(ValueError, match="must be in"):
         random_pool_indices(pool_size=10, selected_count=11, seed=42)
+
+
+def test_train_audit_indices_are_deterministic_subset():
+    selected = random_pool_indices(pool_size=100, selected_count=20, seed=42)
+
+    first = train_audit_pool_indices(selected, sample_limit=8, seed=7)
+    second = train_audit_pool_indices(selected, sample_limit=8, seed=7)
+
+    np.testing.assert_array_equal(first, second)
+    assert len(first) == 8
+    assert set(first).issubset(set(selected))
 
 
 def test_selection_artifact_round_trip(tmp_path: Path):
@@ -116,3 +132,10 @@ def test_adapter_lineage_rejects_different_selection(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match="different selection checksums"):
         validate_adapter_lineage(adapter_dir, "second-selection")
+
+
+def test_score_cache_rejects_changed_protocol(tmp_path: Path):
+    prepare_scoring_cache_manifest(tmp_path, {"model": "first"}, ("scores.npy",))
+
+    with pytest.raises(RuntimeError, match="different scoring protocol"):
+        prepare_scoring_cache_manifest(tmp_path, {"model": "second"}, ("scores.npy",))

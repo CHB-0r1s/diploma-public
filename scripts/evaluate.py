@@ -7,6 +7,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -21,9 +23,16 @@ except ModuleNotFoundError as exc:
         'python -m pip install -e ".[experiments]"'
     ) from exc
 
-from diploma_sft.artifacts import load_selection_artifact, validate_adapter_lineage  # noqa: E402
+from diploma_sft.artifacts import (  # noqa: E402
+    load_selection_artifact,
+    sha256_file,
+    validate_adapter_lineage,
+)
 from diploma_sft.config import to_plain_dict  # noqa: E402
-from diploma_sft.data import load_common_evaluation_dataset  # noqa: E402
+from diploma_sft.data import (  # noqa: E402
+    load_common_evaluation_dataset,
+    load_train_audit_dataset,
+)
 from diploma_sft.evaluation import compute_assistant_only_perplexity  # noqa: E402
 from diploma_sft.runtime import environment_snapshot, require_bf16_cuda  # noqa: E402
 from diploma_sft.wandb_utils import init_wandb, log_files_as_artifact  # noqa: E402
@@ -43,7 +52,7 @@ def main(cfg: DictConfig) -> None:
         raise ValueError("adapter_path is required")
 
     manifest_path = Path(to_absolute_path(str(cfg.selection_artifact)))
-    manifest, _ = load_selection_artifact(manifest_path)
+    manifest, selected_indices = load_selection_artifact(manifest_path)
     adapter_path = Path(to_absolute_path(str(cfg.adapter_path)))
     if not adapter_path.is_dir():
         raise FileNotFoundError(f"Adapter directory does not exist: {adapter_path}")
@@ -74,16 +83,53 @@ def main(cfg: DictConfig) -> None:
         tokenizer=tokenizer,
         sample_limit=cfg.dataset.common_eval_samples,
     )
-    started = time.perf_counter()
-    metrics = compute_assistant_only_perplexity(
+    common_started = time.perf_counter()
+    common_metrics = compute_assistant_only_perplexity(
         model,
         tokenizer,
         common_eval,
         max_length=cfg.model.max_seq_len,
+        desc="assistant-only common eval",
     )
+    common_runtime = time.perf_counter() - common_started
+
+    train_audit, train_audit_metadata, train_audit_indices = load_train_audit_dataset(
+        manifest,
+        selected_indices,
+        tokenizer=tokenizer,
+        sample_limit=cfg.dataset.train_audit_samples,
+        seed=cfg.dataset.train_audit_seed,
+    )
+    train_audit_indices_path = output_dir / "train_audit_indices.npy"
+    np.save(train_audit_indices_path, train_audit_indices, allow_pickle=False)
+    train_audit_started = time.perf_counter()
+    train_audit_metrics = compute_assistant_only_perplexity(
+        model,
+        tokenizer,
+        train_audit,
+        max_length=cfg.model.max_seq_len,
+        desc="assistant-only train audit",
+    )
+    train_audit_runtime = time.perf_counter() - train_audit_started
+
+    metrics = {
+        **common_metrics,
+        "runtime_seconds": common_runtime,
+        "train_audit": {
+            **train_audit_metrics,
+            "runtime_seconds": train_audit_runtime,
+            "indices_sha256": sha256_file(train_audit_indices_path),
+            "dataset": train_audit_metadata,
+        },
+        "generalization_gap": {
+            "assistant_only_loss": common_metrics["assistant_only_loss"]
+            - train_audit_metrics["assistant_only_loss"],
+            "assistant_only_perplexity": common_metrics["assistant_only_perplexity"]
+            - train_audit_metrics["assistant_only_perplexity"],
+        },
+    }
     metrics.update(
         {
-            "runtime_seconds": time.perf_counter() - started,
             "adapter_path": str(adapter_path),
             "selection_method": manifest["selection"]["method"],
             "selection_indices_sha256": manifest["indices"]["sha256"],
@@ -112,13 +158,34 @@ def main(cfg: DictConfig) -> None:
                 "common_eval/assistant_tokens": metrics["assistant_tokens"],
                 "common_eval/evaluated_examples": metrics["evaluated_examples"],
                 "common_eval/skipped_examples": metrics["skipped_examples"],
+                "train_audit/assistant_only_loss": metrics["train_audit"][
+                    "assistant_only_loss"
+                ],
+                "train_audit/assistant_only_perplexity": metrics["train_audit"][
+                    "assistant_only_perplexity"
+                ],
+                "train_audit/assistant_tokens": metrics["train_audit"][
+                    "assistant_tokens"
+                ],
+                "train_audit/evaluated_examples": metrics["train_audit"][
+                    "evaluated_examples"
+                ],
+                "train_audit/skipped_examples": metrics["train_audit"][
+                    "skipped_examples"
+                ],
+                "generalization_gap/assistant_only_loss": metrics[
+                    "generalization_gap"
+                ]["assistant_only_loss"],
+                "generalization_gap/assistant_only_perplexity": metrics[
+                    "generalization_gap"
+                ]["assistant_only_perplexity"],
             }
         )
     log_files_as_artifact(
         run,
         name=f"{cfg.experiment_name}-common-eval",
         artifact_type="evaluation",
-        paths=[str(metrics_path)],
+        paths=[str(metrics_path), str(train_audit_indices_path)],
         metadata={
             "selection_method": manifest["selection"]["method"],
             "selection_indices_sha256": manifest["indices"]["sha256"],

@@ -121,7 +121,7 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 25 тестов
+pytest -q                   # 27 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
@@ -131,12 +131,14 @@ CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый
 Новый эталонный перепрогон разделён на три независимые W&B job type:
 
 ```text
-select -> versioned selection artifact -> train -> LoRA adapter -> evaluate -> common metrics
+select -> versioned selection artifact -> train -> LoRA adapter -> evaluate -> common + train-audit metrics
 ```
 
-Метод отбора выбирается только в `scripts/select_data.py`. `scripts/train.py` не знает, как были получены индексы: он проверяет artifact и обучается на всех 90 000 выбранных примерах без собственного 95/5 split и без выбора best checkpoint по method-dependent val. `scripts/evaluate.py` отдельно считает assistant-only loss/PPL на общем no-leak holdout.
+Метод отбора выбирается только в `scripts/select_data.py`. `scripts/train.py` не знает, как были получены индексы: он проверяет artifact и обучается на всех 90 000 выбранных примерах без собственного 95/5 split и без выбора best checkpoint по method-dependent val. `scripts/evaluate.py` одинаково считает assistant-only loss/PPL на общем no-leak holdout и на фиксированной выборке из 1000 train-примеров. Разность этих метрик сохраняется как `generalization_gap`.
 
-Selection artifact содержит точный Hugging Face dataset commit, fingerprint, границы common holdout и общего 200k pool, seed, pool-relative индексы и SHA256. Все стадии сохраняют resolved Hydra config и environment snapshot. Training по умолчанию автоматически продолжает последний `checkpoint-*` из output directory.
+Selection artifact содержит точный Hugging Face dataset commit, fingerprint, границы common holdout и общего 200k pool, seed, pool-relative индексы и SHA256. IFD дополнительно сохраняет скоры, их SHA256 и протокол с фактически загруженным commit scorer-модели; прерванный скоринг продолжается при повторе той же команды. Все стадии сохраняют resolved Hydra config и environment snapshot. Training по умолчанию автоматически продолжает последний `checkpoint-*` из output directory.
+
+Новые training-run'ы сохраняют checkpoint каждые 200 optimizer steps и держат не более 13 последних (`save_steps: 200`, `save_total_limit: 13`). Финальный adapter сохраняется отдельно. Это не означает автоматический выбор лучшего checkpoint: основной результат по-прежнему фиксирован как модель после полного бюджета в одну эпоху.
 
 Установка:
 
@@ -166,7 +168,8 @@ python scripts/evaluate.py \
   selection_artifact=selections/smoke_random_128/selection_manifest.json \
   adapter_path=outputs/smoke_random_qwen15b/adapter \
   output_dir=outputs/smoke_random_qwen15b \
-  dataset.common_eval_samples=16
+  dataset.common_eval_samples=16 \
+  dataset.train_audit_samples=16
 ```
 
 ### Полный random baseline
@@ -188,4 +191,42 @@ python scripts/evaluate.py \
   output_dir=outputs/baseline_random_qwen15b_90k
 ```
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+### IFD после random baseline
+
+Сначала короткий сквозной smoke. Для него нужен CUDA GPU с bf16:
+
+```bash
+python scripts/select_data.py \
+  selection=ifd \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.batch_size=2 \
+  selection_output_dir=selections/smoke_ifd_64
+```
+
+Если smoke завершился и в W&B появились selection-метрики, запускается полный скоринг 200k и отбор 90k:
+
+```bash
+python scripts/select_data.py \
+  selection=ifd \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/ifd_90000
+```
+
+Повтор этой же команды с тем же `selection_output_dir` продолжает недосчитанные `scores_cond.npy` и `scores_uncond.npy`. Менять модель, dataset revision, pool, batch или реализацию при существующем кеше запрещено проверкой `scoring_cache_manifest.json`.
+
+После появления `selection_manifest.json` обучение и оценка идут тем же протоколом, что random:
+
+```bash
+python scripts/train.py \
+  experiment_name=ifd_qwen15b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k
+
+python scripts/evaluate.py \
+  experiment_name=ifd_qwen15b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_90000/selection_manifest.json \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k
+```
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

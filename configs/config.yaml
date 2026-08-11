@@ -21,6 +21,8 @@ dataset:
   conversation_column: conversations
   common_val_holdout_size: 4500
   common_eval_samples: 4500
+  train_audit_samples: 1000
+  train_audit_seed: 42
 
 model:
   name: Qwen/Qwen2.5-1.5B

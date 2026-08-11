@@ -35,6 +35,7 @@ def compute_assistant_only_perplexity(
     tokenizer: Any,
     examples: Iterable[Dict[str, Any]],
     max_length: int,
+    desc: str = "assistant-only eval",
 ) -> Dict[str, Any]:
     """Compute token-weighted loss and perplexity on assistant spans only."""
     import torch
@@ -50,8 +51,9 @@ def compute_assistant_only_perplexity(
     total_tokens = 0
     evaluated_examples = 0
     skipped_examples = 0
+    skipped_example_indices = []
 
-    for example in tqdm(examples, desc="assistant-only common eval"):
+    for example_index, example in enumerate(tqdm(examples, desc=desc)):
         encoded = tokenizer(
             example["text"],
             return_tensors="pt",
@@ -67,6 +69,7 @@ def compute_assistant_only_perplexity(
         assistant_tokens = sum(mask)
         if assistant_tokens == 0:
             skipped_examples += 1
+            skipped_example_indices.append(example_index)
             continue
 
         labels = input_ids.clone()
@@ -81,7 +84,7 @@ def compute_assistant_only_perplexity(
         evaluated_examples += 1
 
     if total_tokens == 0:
-        raise RuntimeError("No assistant tokens found in the common evaluation holdout")
+        raise RuntimeError("No assistant tokens found in the evaluation dataset")
     mean_loss = total_loss / total_tokens
     return {
         "assistant_only_loss": mean_loss,
@@ -89,4 +92,5 @@ def compute_assistant_only_perplexity(
         "assistant_tokens": total_tokens,
         "evaluated_examples": evaluated_examples,
         "skipped_examples": skipped_examples,
+        "skipped_example_indices": skipped_example_indices,
     }
