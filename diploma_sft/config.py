@@ -22,6 +22,7 @@ class DatasetConfig:
 class ModelConfig:
     name: str = "Qwen/Qwen2.5-1.5B"
     chat_template: str = "qwen-2.5"
+    eos_token: str = "<|im_end|>"
     max_seq_len: int = 2048
     load_in_4bit: bool = True
 
@@ -106,4 +107,3 @@ def to_plain_dict(cfg: Any) -> Dict[str, Any]:
         return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
     except Exception:
         return dict(cfg)
-

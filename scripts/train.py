@@ -104,6 +104,7 @@ def main(cfg: DictConfig) -> None:
         bf16=precision["bf16"],
         fp16=precision["fp16"],
         max_length=cfg.model.max_seq_len,
+        eos_token=cfg.model.eos_token,
         logging_steps=cfg.train.logging_steps,
         eval_strategy="steps",
         eval_steps=cfg.train.eval_steps,
