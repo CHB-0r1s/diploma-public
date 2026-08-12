@@ -1,6 +1,7 @@
 defaults:
   - selection: random
   - train: qwen15b_qlora
+  - benchmark: rummlu
   - _self_
 
 experiment_name: baseline_random_qwen15b_90k
@@ -10,6 +11,7 @@ selection_output_dir: selections/${selection.method}_${selection.subsample_size}
 selection_artifact: null
 adapter_path: null
 evaluation_output_dir: ${output_dir}/evaluation
+benchmark_output_dir: ${output_dir}/benchmarks/${benchmark.name}
 debug: false
 max_steps: -1
 resume_from_checkpoint: auto

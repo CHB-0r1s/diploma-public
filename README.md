@@ -121,20 +121,22 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 27 тестов
+pytest -q                   # 30 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
 
 ## Экспериментальный pipeline
 
-Новый эталонный перепрогон разделён на три независимые W&B job type:
+Новый эталонный перепрогон разделён на четыре независимые W&B job type:
 
 ```text
-select -> versioned selection artifact -> train -> LoRA adapter -> evaluate -> common + train-audit metrics
+select -> versioned selection artifact -> train -> LoRA adapter -> evaluate + benchmark
 ```
 
 Метод отбора выбирается только в `scripts/select_data.py`. `scripts/train.py` не знает, как были получены индексы: он проверяет artifact и обучается на всех 90 000 выбранных примерах без собственного 95/5 split и без выбора best checkpoint по method-dependent val. `scripts/evaluate.py` одинаково считает assistant-only loss/PPL на общем no-leak holdout и на фиксированной выборке из 1000 train-примеров. Разность этих метрик сохраняется как `generalization_gap`.
+
+`scripts/benchmark.py` независимо запускает внешний public ruMMLU: 57 предметов, 5-shot prompt и accuracy по log-likelihood вариантов `A/B/C/D`. Результаты сохраняются целиком и по предметам, отправляются в W&B и возобновляются с последнего записанного предметного файла.
 
 Selection artifact содержит точный Hugging Face dataset commit, fingerprint, границы common holdout и общего 200k pool, seed, pool-relative индексы и SHA256. IFD дополнительно сохраняет скоры, их SHA256 и протокол с фактически загруженным commit scorer-модели; прерванный скоринг продолжается при повторе той же команды. Все стадии сохраняют resolved Hydra config и environment snapshot. Training по умолчанию автоматически продолжает последний `checkpoint-*` из output directory.
 
@@ -229,4 +231,39 @@ python scripts/evaluate.py \
   output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k
 ```
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+### Public ruMMLU benchmark
+
+Это открытый набор [`gametwix/rummlu`](https://huggingface.co/datasets/gametwix/rummlu) из 10 033 переведённых и проверенных вопросов. Он подходит для одинакового воспроизводимого сравнения random и IFD adapters, но не равен закрытому ruMMLU test из MERA и не должен выдаваться за результат закрытого leaderboard.
+
+Сначала smoke на одном предмете и 10 вопросах:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=ifd_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/rummlu_smoke \
+  'benchmark.subjects=[abstract_algebra]' \
+  benchmark.max_samples_per_subject=10
+```
+
+Полный benchmark для IFD:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=ifd_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/rummlu
+```
+
+Для random baseline меняются только experiment и adapter/output paths:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=baseline_random_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/benchmarks/rummlu
+```
+
+Повтор той же команды после обрыва продолжает незавершённый предмет. Итог лежит в `rummlu_metrics.json`; основные W&B-поля: `rummlu/accuracy`, `rummlu/macro_subject_accuracy` и `rummlu/subject/*`.
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

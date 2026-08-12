@@ -90,6 +90,28 @@ def prepare_scoring_cache_manifest(
     return payload
 
 
+def prepare_benchmark_run_manifest(
+    output_dir: Path,
+    benchmark_protocol: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Create or verify the immutable protocol for a resumable benchmark run."""
+    payload = {
+        "benchmark_protocol": benchmark_protocol,
+        "benchmark_protocol_sha256": sha256_json(benchmark_protocol),
+    }
+    path = output_dir / "benchmark_run_manifest.json"
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            existing = json.load(stream)
+        if existing != payload:
+            raise RuntimeError("Benchmark output directory belongs to a different protocol")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, ensure_ascii=False)
+    return payload
+
+
 def write_selection_artifact(
     output_dir: Path,
     selected_indices: np.ndarray,

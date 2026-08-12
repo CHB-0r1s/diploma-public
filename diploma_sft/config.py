@@ -75,6 +75,19 @@ class SelectionConfig:
 
 
 @dataclass
+class BenchmarkConfig:
+    name: str = "rummlu"
+    dataset_name: str = "gametwix/rummlu"
+    revision: Optional[str] = None
+    num_fewshot: int = 5
+    batch_size: int = 2
+    max_seq_len: int = 4_096
+    max_samples_per_subject: Optional[int] = None
+    subjects: Optional[List[str]] = None
+    checkpoint_every: int = 100
+
+
+@dataclass
 class WandbConfig:
     enabled: bool = True
     project: str = "diploma-sft"
@@ -94,6 +107,7 @@ class ExperimentConfig:
     selection_artifact: Optional[str] = None
     adapter_path: Optional[str] = None
     evaluation_output_dir: str = "${output_dir}/evaluation"
+    benchmark_output_dir: str = "${output_dir}/benchmarks/${benchmark.name}"
     debug: bool = False
     max_steps: int = -1
     resume_from_checkpoint: Optional[str] = "auto"
@@ -102,6 +116,7 @@ class ExperimentConfig:
     lora: LoraConfig = field(default_factory=LoraConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
+    benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
 
 
