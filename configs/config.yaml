@@ -1,13 +1,13 @@
 defaults:
   - selection: random
-  - train: qwen15b_qlora
+  - train: qwen05b_qlora
   - benchmark: rummlu
   - _self_
 
-experiment_name: baseline_random_qwen15b_90k
+experiment_name: baseline_random_qwen05b_90k
 seed: 42
 output_dir: outputs/${experiment_name}
-selection_output_dir: selections/${selection.method}_${selection.subsample_size}
+selection_output_dir: selections/${selection.method}${selection.artifact_suffix}_${selection.subsample_size}
 selection_artifact: null
 adapter_path: null
 evaluation_output_dir: ${output_dir}/evaluation
@@ -27,7 +27,7 @@ dataset:
   train_audit_seed: 42
 
 model:
-  name: Qwen/Qwen2.5-1.5B
+  name: Qwen/Qwen2.5-0.5B
   chat_template: qwen-2.5
   eos_token: <|im_end|>
   max_seq_len: 2048

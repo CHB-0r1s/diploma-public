@@ -27,7 +27,7 @@ flowchart TD
     E3 --> F
     E4 --> F
     E5 --> F
-    F --> G["QLoRA SFT<br/>Qwen2.5-1.5B<br/>masked, packed, 1 epoch"]
+    F --> G["QLoRA SFT<br/>Qwen2.5-0.5B<br/>masked, packed, 1 epoch"]
     G --> H["Adapters"]
     H --> I["Оценка ru-mt-bench<br/>официальный FastChat judge"]
     B -.->|no leak| I
@@ -49,7 +49,7 @@ flowchart LR
 
 ## Общий протокол
 
-- Базовая модель target-обучения: `Qwen/Qwen2.5-1.5B`.
+- Базовая модель target-обучения: `Qwen/Qwen2.5-0.5B`.
 - Обучение: QLoRA, assistant-only masked loss, packing, `SUBSAMPLE_SIZE = 90_000`, `NUM_EPOCHS = 1`.
 - Precision: только bf16; если bf16 недоступен, тетрадки должны останавливаться без fallback на fp16.
 - Chat template: явно фиксируется Qwen2.5 ChatML через `get_chat_template(..., "qwen-2.5")`; не используется неявный stock `apply_chat_template`.
@@ -61,7 +61,7 @@ flowchart LR
 
 | Параметр | Значение |
 |----------|----------|
-| Base model | `Qwen/Qwen2.5-1.5B` |
+| Base model | `Qwen/Qwen2.5-0.5B` |
 | Метод обучения | QLoRA, assistant-only masked loss, packing |
 | `SUBSAMPLE_SIZE` | 90 000 |
 | `NUM_EPOCHS` | 1 |
@@ -82,6 +82,8 @@ flowchart LR
 | 5 | Quality classifier | `selection_quality_classifier` | оценка Qwen2.5-0.5B scorer'а | top-90k по quality | обучен на Claude-labeled 3k subset |
 
 ## Тетрадки
+
+Тетрадки ниже сохраняют исторические 1.5B-прогоны и их исходные параметры. Основной воспроизводимый перепрогон теперь выполняется через `scripts/*.py` с `Qwen/Qwen2.5-0.5B`; его команды приведены в разделе «Экспериментальный pipeline».
 
 Запускать в таком порядке:
 
@@ -160,16 +162,16 @@ python scripts/select_data.py \
   selection_output_dir=selections/smoke_random_128
 
 python scripts/train.py \
-  experiment_name=smoke_random_qwen15b \
+  experiment_name=smoke_random_qwen05b \
   selection_artifact=selections/smoke_random_128/selection_manifest.json \
-  output_dir=outputs/smoke_random_qwen15b \
+  output_dir=outputs/smoke_random_qwen05b \
   max_steps=5
 
 python scripts/evaluate.py \
-  experiment_name=smoke_random_qwen15b \
+  experiment_name=smoke_random_qwen05b \
   selection_artifact=selections/smoke_random_128/selection_manifest.json \
-  adapter_path=outputs/smoke_random_qwen15b/adapter \
-  output_dir=outputs/smoke_random_qwen15b \
+  adapter_path=outputs/smoke_random_qwen05b/adapter \
+  output_dir=outputs/smoke_random_qwen05b \
   dataset.common_eval_samples=16 \
   dataset.train_audit_samples=16
 ```
@@ -182,15 +184,15 @@ python scripts/select_data.py \
   selection_output_dir=selections/random_90000
 
 python scripts/train.py \
-  experiment_name=baseline_random_qwen15b_90k \
+  experiment_name=baseline_random_qwen05b_90k \
   selection_artifact=selections/random_90000/selection_manifest.json \
-  output_dir=outputs/baseline_random_qwen15b_90k
+  output_dir=outputs/baseline_random_qwen05b_90k
 
 python scripts/evaluate.py \
-  experiment_name=baseline_random_qwen15b_90k \
+  experiment_name=baseline_random_qwen05b_90k \
   selection_artifact=selections/random_90000/selection_manifest.json \
-  adapter_path=outputs/baseline_random_qwen15b_90k/adapter \
-  output_dir=outputs/baseline_random_qwen15b_90k
+  adapter_path=outputs/baseline_random_qwen05b_90k/adapter \
+  output_dir=outputs/baseline_random_qwen05b_90k
 ```
 
 ### IFD после random baseline
@@ -203,7 +205,7 @@ python scripts/select_data.py \
   selection.pool_size=256 \
   selection.subsample_size=64 \
   selection.batch_size=2 \
-  selection_output_dir=selections/smoke_ifd_64
+  selection_output_dir=selections/smoke_ifd_qwen05b_64
 ```
 
 Если smoke завершился и в W&B появились selection-метрики, запускается полный скоринг 200k и отбор 90k:
@@ -211,7 +213,7 @@ python scripts/select_data.py \
 ```bash
 python scripts/select_data.py \
   selection=ifd \
-  selection_output_dir=/content/drive/MyDrive/diploma/selections/ifd_90000
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000
 ```
 
 Повтор этой же команды с тем же `selection_output_dir` продолжает недосчитанные `scores_cond.npy` и `scores_uncond.npy`. Менять модель, dataset revision, pool, batch или реализацию при существующем кеше запрещено проверкой `scoring_cache_manifest.json`.
@@ -220,15 +222,15 @@ python scripts/select_data.py \
 
 ```bash
 python scripts/train.py \
-  experiment_name=ifd_qwen15b_90k \
-  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_90000/selection_manifest.json \
-  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k
+  experiment_name=ifd_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k
 
 python scripts/evaluate.py \
-  experiment_name=ifd_qwen15b_90k \
-  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_90000/selection_manifest.json \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
-  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k
+  experiment_name=ifd_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000/selection_manifest.json \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k
 ```
 
 ### Public ruMMLU benchmark
@@ -239,9 +241,9 @@ python scripts/evaluate.py \
 
 ```bash
 python scripts/benchmark.py \
-  experiment_name=ifd_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/rummlu_smoke \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu_smoke \
   'benchmark.subjects=[abstract_algebra]' \
   benchmark.max_samples_per_subject=10
 ```
@@ -250,18 +252,18 @@ python scripts/benchmark.py \
 
 ```bash
 python scripts/benchmark.py \
-  experiment_name=ifd_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/rummlu
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu
 ```
 
 Для random baseline меняются только experiment и adapter/output paths:
 
 ```bash
 python scripts/benchmark.py \
-  experiment_name=baseline_random_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/benchmarks/rummlu
+  experiment_name=baseline_random_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/rummlu
 ```
 
 Повтор той же команды после обрыва продолжает незавершённый предмет. Итог лежит в `rummlu_metrics.json`; основные W&B-поля: `rummlu/accuracy`, `rummlu/macro_subject_accuracy` и `rummlu/subject/*`.
@@ -275,9 +277,9 @@ Smoke для IFD по 10 примеров на задачу:
 ```bash
 python scripts/benchmark.py \
   benchmark=mera_core \
-  experiment_name=ifd_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/mera_core_smoke \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core_smoke \
   benchmark.max_samples_per_task=10
 ```
 
@@ -286,9 +288,9 @@ python scripts/benchmark.py \
 ```bash
 python scripts/benchmark.py \
   benchmark=mera_core \
-  experiment_name=ifd_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/mera_core
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core
 ```
 
 Полный MERA Core для random baseline:
@@ -296,11 +298,11 @@ python scripts/benchmark.py \
 ```bash
 python scripts/benchmark.py \
   benchmark=mera_core \
-  experiment_name=baseline_random_qwen15b_90k \
-  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/adapter \
-  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/benchmarks/mera_core
+  experiment_name=baseline_random_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/mera_core
 ```
 
 `mera_core/macro_task_accuracy` равноправно усредняет пять task accuracy; `mera_core/accuracy` считает micro-average по всем примерам и сильнее взвешивает большой `ruOpenBookQA`. Для сравнения стратегий основной агрегат — `macro_task_accuracy`; task-level accuracy и macro-F1 сохраняются отдельно. Повтор той же команды возобновляет незавершённые task-файлы.
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

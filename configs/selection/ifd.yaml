@@ -1,8 +1,9 @@
 method: ifd
+artifact_suffix: _qwen05b
 subsample_size: 90000
 pool_size: 200000
 seed: 42
-scorer_model: Qwen/Qwen2.5-1.5B
+scorer_model: Qwen/Qwen2.5-0.5B
 batch_size: 8
 ifd_threshold: 1.0
 checkpoint_every: 10000

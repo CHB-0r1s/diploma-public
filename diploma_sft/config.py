@@ -20,7 +20,7 @@ class DatasetConfig:
 
 @dataclass
 class ModelConfig:
-    name: str = "Qwen/Qwen2.5-1.5B"
+    name: str = "Qwen/Qwen2.5-0.5B"
     chat_template: str = "qwen-2.5"
     eos_token: str = "<|im_end|>"
     max_seq_len: int = 2048
@@ -65,10 +65,11 @@ class TrainConfig:
 @dataclass
 class SelectionConfig:
     method: str = "random"
+    artifact_suffix: str = ""
     subsample_size: int = 90_000
     pool_size: int = 200_000
     seed: int = 42
-    scorer_model: str = "Qwen/Qwen2.5-1.5B"
+    scorer_model: str = "Qwen/Qwen2.5-0.5B"
     batch_size: int = 8
     ifd_threshold: float = 1.0
     checkpoint_every: int = 10_000
@@ -102,10 +103,12 @@ class WandbConfig:
 
 @dataclass
 class ExperimentConfig:
-    experiment_name: str = "baseline_random_qwen15b_90k"
+    experiment_name: str = "baseline_random_qwen05b_90k"
     seed: int = 42
     output_dir: str = "outputs/${experiment_name}"
-    selection_output_dir: str = "selections/${selection.method}_${selection.subsample_size}"
+    selection_output_dir: str = (
+        "selections/${selection.method}${selection.artifact_suffix}_${selection.subsample_size}"
+    )
     selection_artifact: Optional[str] = None
     adapter_path: Optional[str] = None
     evaluation_output_dir: str = "${output_dir}/evaluation"
