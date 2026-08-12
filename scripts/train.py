@@ -163,6 +163,17 @@ def main(cfg: DictConfig) -> None:
                             "Unsloth did not return tensor logits for the no-label entropy pass"
                         )
                     selected_mask = shifted_mask[:, positions]
+                    if logits.shape[:2] == labels.shape:
+                        selected_logits = logits[:, positions, :]
+                        del entropy_outputs, logits
+                        logits = selected_logits
+                    elif logits.shape[:2] != selected_mask.shape:
+                        raise RuntimeError(
+                            "Unexpected entropy logits shape: "
+                            f"logits={tuple(logits.shape)}, "
+                            f"selected_mask={tuple(selected_mask.shape)}, "
+                            f"labels={tuple(labels.shape)}"
+                        )
                     entropy = masked_token_entropy(
                         logits,
                         selected_mask,
