@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from diploma_sft.training_metrics import assistant_token_entropy
+from diploma_sft.training_metrics import assistant_token_entropy, masked_token_entropy
 
 
 def test_assistant_token_entropy_uses_only_supervised_shifted_positions():
@@ -25,3 +25,13 @@ def test_assistant_token_entropy_returns_none_without_supervised_tokens():
     labels = torch.full((1, 3), -100)
 
     assert assistant_token_entropy(logits, labels) is None
+
+
+def test_masked_token_entropy_accepts_preselected_sequence_positions():
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, "tensor"):
+        pytest.skip("real torch is not installed")
+    logits = torch.zeros((2, 2, 2), dtype=torch.float32)
+    mask = torch.tensor([[True, False], [False, True]])
+
+    assert masked_token_entropy(logits, mask) == pytest.approx(math.log(2))

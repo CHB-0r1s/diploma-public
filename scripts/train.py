@@ -38,7 +38,7 @@ from diploma_sft.runtime import (  # noqa: E402
     latest_checkpoint,
     require_bf16_cuda,
 )
-from diploma_sft.training_metrics import assistant_token_entropy  # noqa: E402
+from diploma_sft.training_metrics import masked_token_entropy  # noqa: E402
 from diploma_sft.wandb_utils import init_wandb, log_files_as_artifact  # noqa: E402
 
 
@@ -133,23 +133,42 @@ def main(cfg: DictConfig) -> None:
             result = super().compute_loss(
                 model,
                 inputs,
-                return_outputs=return_outputs or collect_entropy,
+                return_outputs=return_outputs,
                 **kwargs,
             )
-            if return_outputs or collect_entropy:
-                loss, outputs = result
-            else:
-                return result
 
             if collect_entropy:
-                logits = getattr(outputs, "logits", None)
-                if logits is not None and logits.shape[-2] == labels.shape[-1]:
-                    entropy = assistant_token_entropy(
+                import torch
+
+                shifted_mask = labels[..., 1:] != -100
+                positions = torch.nonzero(
+                    shifted_mask.any(dim=0),
+                    as_tuple=False,
+                ).flatten()
+                if positions.numel():
+                    entropy_inputs = {
+                        "input_ids": inputs["input_ids"],
+                        "use_cache": False,
+                        "return_dict": True,
+                        "logits_to_keep": positions,
+                    }
+                    for name in ("attention_mask", "position_ids"):
+                        if inputs.get(name) is not None:
+                            entropy_inputs[name] = inputs[name]
+                    with torch.no_grad():
+                        entropy_outputs = model(**entropy_inputs)
+                    logits = getattr(entropy_outputs, "logits", None)
+                    if not hasattr(logits, "shape"):
+                        raise RuntimeError(
+                            "Unsloth did not return tensor logits for the no-label entropy pass"
+                        )
+                    selected_mask = shifted_mask[:, positions]
+                    entropy = masked_token_entropy(
                         logits,
-                        labels,
+                        selected_mask,
                         chunk_size=int(cfg.train.entropy_chunk_size),
                     )
-                    token_count = int((labels[..., 1:] != -100).sum().item())
+                    token_count = int(selected_mask.sum().item())
                     if self._entropy_target_step != next_step:
                         self._entropy_target_step = next_step
                         self._entropy_weighted_sum = 0.0
@@ -163,7 +182,7 @@ def main(cfg: DictConfig) -> None:
                             self._entropy_weighted_sum / self._entropy_token_count
                         )
                     self._last_entropy_step = next_step
-            return (loss, outputs) if return_outputs else loss
+            return result
 
         def log(self, logs, *args, **kwargs):
             if "loss" in logs and self._pending_entropy is not None:

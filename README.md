@@ -144,7 +144,7 @@ Selection artifact содержит точный Hugging Face dataset commit, fi
 
 Новые training-run'ы сохраняют checkpoint каждые 200 optimizer steps и держат не более 13 последних (`save_steps: 200`, `save_total_limit: 13`). Финальный adapter сохраняется отдельно. Это не означает автоматический выбор лучшего checkpoint: основной результат по-прежнему фиксирован как модель после полного бюджета в одну эпоху.
 
-Во время обучения раз в `logging_steps` из уже рассчитанных logits также считается средняя entropy распределения следующего токена по всему effective optimizer batch, но только на supervised assistant-позициях. Она логируется в W&B как `train/entropy` в nats; prompt-токены с label `-100` не учитываются.
+Во время обучения раз в `logging_steps` отдельным `no_grad` forward считается средняя entropy распределения следующего токена по всему effective optimizer batch, но только на supervised assistant-позициях. Через Qwen2 `logits_to_keep` запрашиваются только нужные sequence-позиции, а основной training forward сохраняет Unsloth fused cross-entropy. Метрика логируется в W&B как `train/entropy` в nats; prompt-токены с label `-100` не учитываются.
 
 Установка:
 
