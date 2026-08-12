@@ -33,6 +33,12 @@ from diploma_sft.artifacts import (  # noqa: E402
 )
 from diploma_sft.config import to_plain_dict  # noqa: E402
 from diploma_sft.data import resolve_dataset_revision  # noqa: E402
+from diploma_sft.mera_core import (  # noqa: E402
+    TASK_SPECS,
+    aggregate_task_results,
+    summarize_task,
+)
+from diploma_sft.mera_core import build_prompt as build_mera_prompt  # noqa: E402
 from diploma_sft.rummlu import (  # noqa: E402
     CHOICES,
     aggregate_subject_results,
@@ -62,15 +68,16 @@ def _score_prompts(
     model: Any,
     tokenizer: Any,
     prompts: Sequence[str],
+    candidates: Sequence[str],
     max_length: int,
 ) -> Tuple[List[List[float]], List[bool]]:
-    """Score A/B/C/D continuations and return log-likelihoods plus truncation flags."""
+    """Score candidate continuations and return log-likelihoods plus truncation flags."""
     import torch
     import torch.nn.functional as F
 
     candidate_ids = [
         tokenizer(choice, add_special_tokens=False)["input_ids"]
-        for choice in CHOICES
+        for choice in candidates
     ]
     prompt_sequences: List[List[int]] = []
     truncated_flags: List[bool] = []
@@ -89,7 +96,7 @@ def _score_prompts(
         prompt_sequences.append(prompt_ids)
         truncated_flags.append(was_truncated)
 
-    # Qwen encodes each leading-space answer letter as one token. In that common
+    # Qwen encodes each answer label as one token. In that common
     # case one prompt forward supplies all four continuation probabilities.
     if all(len(ids) == 1 for ids in candidate_ids):
         pad_id = tokenizer.pad_token_id
@@ -164,7 +171,8 @@ def _score_prompts(
         flat_scores.append(
             float(token_log_probs.gather(1, targets.unsqueeze(1)).sum().item())
         )
-    return [flat_scores[i : i + 4] for i in range(0, len(flat_scores), 4)], truncated_flags
+    width = len(candidates)
+    return [flat_scores[i : i + width] for i in range(0, len(flat_scores), width)], truncated_flags
 
 
 def _evaluate_subject(
@@ -193,6 +201,12 @@ def _evaluate_subject(
             raise RuntimeError(f"Cached subject {subject} has a different test size")
 
     predictions = payload["predictions"]
+    if len(predictions) > expected:
+        raise RuntimeError(f"Cached ruMMLU subject {subject} has too many predictions")
+    cached_indices = [int(row["index"]) for row in predictions]
+    expected_indices = list(range(len(predictions)))
+    if cached_indices != expected_indices:
+        raise RuntimeError(f"Cached ruMMLU subject {subject} has non-sequential indices")
     start = len(predictions)
     if len(dev) < int(cfg.benchmark.num_fewshot):
         raise RuntimeError(
@@ -215,6 +229,7 @@ def _evaluate_subject(
             model,
             tokenizer,
             prompts,
+            candidates=CHOICES,
             max_length=int(cfg.benchmark.max_seq_len),
         )
         for offset, (example, choice_scores, was_truncated) in enumerate(
@@ -247,10 +262,289 @@ def _evaluate_subject(
     }
 
 
+def _evaluate_mera_task(
+    task: str,
+    dataset: Any,
+    model: Any,
+    tokenizer: Any,
+    cfg: DictConfig,
+    output_path: Path,
+    protocol_sha256: str,
+) -> Dict[str, Any]:
+    spec = TASK_SPECS[task]
+    demonstrations = [dataset[index] for index in range(spec.num_fewshot)]
+    evaluation = dataset.select(range(spec.num_fewshot, len(dataset)))
+    if cfg.benchmark.max_samples_per_task is not None:
+        evaluation = evaluation.select(
+            range(min(int(cfg.benchmark.max_samples_per_task), len(evaluation)))
+        )
+    expected = len(evaluation)
+    if expected == 0:
+        raise RuntimeError(f"No labeled evaluation examples remain for MERA task {task}")
+
+    payload: Dict[str, Any] = {
+        "task": task,
+        "protocol_sha256": protocol_sha256,
+        "expected_examples": expected,
+        "predictions": [],
+    }
+    if output_path.exists():
+        with output_path.open(encoding="utf-8") as stream:
+            payload = json.load(stream)
+        if payload.get("protocol_sha256") != protocol_sha256:
+            raise RuntimeError(f"Cached MERA task {task} belongs to a different protocol")
+        if int(payload.get("expected_examples", -1)) != expected:
+            raise RuntimeError(f"Cached MERA task {task} has a different evaluation size")
+
+    predictions = payload["predictions"]
+    if len(predictions) > expected:
+        raise RuntimeError(f"Cached MERA task {task} has too many predictions")
+    cached_indices = [int(row["index"]) for row in predictions]
+    expected_indices = list(range(spec.num_fewshot, spec.num_fewshot + len(predictions)))
+    if cached_indices != expected_indices:
+        raise RuntimeError(f"Cached MERA task {task} has non-sequential indices")
+    start = len(predictions)
+    checkpoint_every = int(cfg.benchmark.checkpoint_every)
+    last_checkpoint = start
+    from tqdm.auto import tqdm
+
+    for batch_start in tqdm(
+        range(start, expected, int(cfg.benchmark.batch_size)),
+        desc=f"MERA Core {task}",
+    ):
+        batch_end = min(batch_start + int(cfg.benchmark.batch_size), expected)
+        examples = [evaluation[index] for index in range(batch_start, batch_end)]
+        for example in examples:
+            if not example["outputs"]:
+                raise RuntimeError(f"MERA task {task} evaluation split contains hidden labels")
+        prompts = [
+            build_mera_prompt(task, example, demonstrations) for example in examples
+        ]
+        scores, truncated_flags = _score_prompts(
+            model,
+            tokenizer,
+            prompts,
+            candidates=spec.candidates,
+            max_length=int(cfg.benchmark.max_seq_len),
+        )
+        for offset, (example, candidate_scores, was_truncated) in enumerate(
+            zip(examples, scores, truncated_flags)
+        ):
+            prediction = spec.candidates[
+                max(range(len(spec.candidates)), key=lambda index: candidate_scores[index])
+            ]
+            predictions.append(
+                {
+                    "index": batch_start + offset + spec.num_fewshot,
+                    "gold": example["outputs"],
+                    "prediction": prediction,
+                    "correct": prediction == example["outputs"],
+                    "candidate_log_likelihoods": dict(
+                        zip(spec.candidates, candidate_scores)
+                    ),
+                    "prompt_truncated": was_truncated,
+                }
+            )
+        if len(predictions) - last_checkpoint >= checkpoint_every:
+            _atomic_write_json(output_path, payload)
+            last_checkpoint = len(predictions)
+
+    _atomic_write_json(output_path, payload)
+    return summarize_task(task, predictions, output_path.name)
+
+
+def _run_mera_core(
+    cfg: DictConfig,
+    adapter_path: Path,
+    adapter_manifest: Dict[str, Any],
+    adapter_config: Dict[str, Any],
+    adapter_weights_path: Path,
+    output_dir: Path,
+) -> None:
+    from datasets import load_dataset
+    from huggingface_hub import HfApi
+
+    tasks = list(cfg.benchmark.tasks)
+    unknown = sorted(set(tasks) - set(TASK_SPECS))
+    if unknown:
+        raise ValueError(f"Unknown MERA Core tasks: {unknown}")
+    resolved_revision = resolve_dataset_revision(
+        cfg.benchmark.dataset_name,
+        cfg.benchmark.revision,
+    )
+    base_model_name = adapter_config["base_model_name_or_path"]
+    base_model_revision = HfApi().model_info(repo_id=base_model_name).sha
+    environment = environment_snapshot(REPO_ROOT)
+    task_datasets = {}
+    task_protocols = {}
+    for task in tasks:
+        spec = TASK_SPECS[task]
+        dataset = load_dataset(
+            cfg.benchmark.dataset_name,
+            task,
+            split=spec.evaluation_split,
+            revision=resolved_revision,
+        )
+        labeled_rows = sum(bool(row["outputs"]) for row in dataset)
+        if labeled_rows != len(dataset):
+            raise RuntimeError(
+                f"MERA task {task} split {spec.evaluation_split} has "
+                f"{len(dataset) - labeled_rows} hidden labels"
+            )
+        task_datasets[task] = dataset
+        task_protocols[task] = {
+            "evaluation_split": TASK_SPECS[task].evaluation_split,
+            "candidates": list(TASK_SPECS[task].candidates),
+            "num_fewshot": TASK_SPECS[task].num_fewshot,
+            "exclude_demonstrations_from_evaluation": True,
+            "reports_macro_f1": TASK_SPECS[task].reports_macro_f1,
+            "source_rows": len(dataset),
+            "evaluation_rows_before_limit": len(dataset) - spec.num_fewshot,
+            "fingerprint": getattr(dataset, "_fingerprint", None),
+        }
+    protocol = {
+        "implementation": "public-labeled-mera-core-loglikelihood-v1",
+        "implementation_sha256": {
+            "runner": sha256_file(Path(__file__)),
+            "helpers": sha256_file(REPO_ROOT / "diploma_sft" / "mera_core.py"),
+        },
+        "scope": "public labeled splits; not the closed MERA leaderboard test",
+        "adapter_path": str(adapter_path),
+        "adapter_config_sha256": sha256_file(adapter_path / "adapter_config.json"),
+        "adapter_weights_sha256": sha256_file(adapter_weights_path),
+        "base_model": {
+            "name": base_model_name,
+            "resolved_revision": base_model_revision,
+        },
+        "selection_indices_sha256": adapter_manifest["selection_indices_sha256"],
+        "training_protocol_sha256": adapter_manifest["training_protocol_sha256"],
+        "dataset": {
+            "name": cfg.benchmark.dataset_name,
+            "resolved_revision": resolved_revision,
+        },
+        "tasks": task_protocols,
+        "max_samples_per_task": cfg.benchmark.max_samples_per_task,
+        "max_seq_len": int(cfg.benchmark.max_seq_len),
+        "batch_size": int(cfg.benchmark.batch_size),
+        "chat_template": cfg.model.chat_template,
+        "runtime": {
+            "gpu": environment["gpu"],
+            "packages": {
+                name: environment["packages"].get(name)
+                for name in (
+                    "torch",
+                    "transformers",
+                    "datasets",
+                    "huggingface-hub",
+                    "unsloth",
+                    "bitsandbytes",
+                )
+            },
+        },
+    }
+    run_manifest = prepare_benchmark_run_manifest(output_dir, protocol)
+    _atomic_write_json(output_dir / "config.resolved.json", OmegaConf.to_container(cfg, resolve=True))
+    _atomic_write_json(output_dir / "environment.json", environment)
+
+    run = init_wandb(
+        cfg,
+        config=to_plain_dict(cfg),
+        job_type="benchmark",
+        run_name=f"{cfg.experiment_name}-mera-core",
+        extra_tags=["mera-core"],
+    )
+    require_bf16_cuda()
+    from unsloth import FastLanguageModel  # noqa: I001
+    from unsloth.chat_templates import get_chat_template
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=str(adapter_path),
+        max_seq_length=cfg.benchmark.max_seq_len,
+        load_in_4bit=cfg.model.load_in_4bit,
+    )
+    loaded_base_commit = getattr(model.config, "_commit_hash", None)
+    if loaded_base_commit and loaded_base_commit != base_model_revision:
+        raise RuntimeError(
+            "Loaded base model revision differs from the benchmark protocol: "
+            f"loaded={loaded_base_commit}, expected={base_model_revision}"
+        )
+    tokenizer = get_chat_template(tokenizer, chat_template=cfg.model.chat_template)
+    tokenizer.padding_side = "right"
+    FastLanguageModel.for_inference(model)
+
+    started = time.perf_counter()
+    task_results = []
+    task_paths = []
+    for task in tasks:
+        dataset = task_datasets[task]
+        task_path = output_dir / "tasks" / f"{task}.json"
+        result = _evaluate_mera_task(
+            task,
+            dataset,
+            model,
+            tokenizer,
+            cfg,
+            task_path,
+            run_manifest["benchmark_protocol_sha256"],
+        )
+        task_results.append(result)
+        task_paths.append(task_path)
+        if run is not None:
+            values = {f"mera_core/task/{task}/accuracy": result["accuracy"]}
+            if "macro_f1" in result:
+                values[f"mera_core/task/{task}/macro_f1"] = result["macro_f1"]
+            run.log(values)
+
+    metrics = aggregate_task_results(task_results)
+    metrics.update(
+        {
+            "runtime_seconds": time.perf_counter() - started,
+            "scope": "public labeled splits; not the closed MERA leaderboard test",
+            "dataset_name": cfg.benchmark.dataset_name,
+            "dataset_resolved_revision": resolved_revision,
+            "adapter_path": str(adapter_path),
+            "selection_indices_sha256": adapter_manifest["selection_indices_sha256"],
+            "training_protocol_sha256": adapter_manifest["training_protocol_sha256"],
+            "benchmark_protocol_sha256": run_manifest["benchmark_protocol_sha256"],
+            "truncated_prompts": sum(row["truncated_prompts"] for row in task_results),
+            "task_results": task_results,
+        }
+    )
+    metrics_path = output_dir / "mera_core_metrics.json"
+    _atomic_write_json(metrics_path, metrics)
+    if run is not None:
+        run.log(
+            {
+                "mera_core/accuracy": metrics["accuracy"],
+                "mera_core/macro_task_accuracy": metrics["macro_task_accuracy"],
+                "mera_core/examples": metrics["examples"],
+                "mera_core/truncated_prompts": metrics["truncated_prompts"],
+            }
+        )
+    log_files_as_artifact(
+        run,
+        name=f"{cfg.experiment_name}-mera-core",
+        artifact_type="benchmark-results",
+        paths=[
+            str(metrics_path),
+            str(output_dir / "benchmark_run_manifest.json"),
+            *map(str, task_paths),
+        ],
+        metadata={
+            "accuracy": metrics["accuracy"],
+            "dataset_revision": resolved_revision,
+            "benchmark_protocol_sha256": run_manifest["benchmark_protocol_sha256"],
+        },
+    )
+    if run is not None:
+        run.finish()
+    print(json.dumps(metrics, indent=2, ensure_ascii=False))
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    if cfg.benchmark.name != "rummlu":
-        raise NotImplementedError("Only benchmark=rummlu is currently implemented")
+    if cfg.benchmark.name not in {"rummlu", "mera_core"}:
+        raise NotImplementedError("Use benchmark=rummlu or benchmark=mera_core")
     if not cfg.adapter_path:
         raise ValueError("adapter_path is required")
 
@@ -265,6 +559,17 @@ def main(cfg: DictConfig) -> None:
         raise RuntimeError(f"Adapter weights are missing: {adapter_weights_path}")
     output_dir = Path(to_absolute_path(str(cfg.benchmark_output_dir)))
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cfg.benchmark.name == "mera_core":
+        _run_mera_core(
+            cfg,
+            adapter_path,
+            adapter_manifest,
+            adapter_config,
+            adapter_weights_path,
+            output_dir,
+        )
+        return
 
     from datasets import get_dataset_config_names, load_dataset
 

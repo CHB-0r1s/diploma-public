@@ -85,6 +85,8 @@ class BenchmarkConfig:
     max_samples_per_subject: Optional[int] = None
     subjects: Optional[List[str]] = None
     checkpoint_every: int = 100
+    tasks: Optional[List[str]] = None
+    max_samples_per_task: Optional[int] = None
 
 
 @dataclass

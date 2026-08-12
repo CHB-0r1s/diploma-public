@@ -121,7 +121,7 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 30 тестов
+pytest -q                   # 35 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
@@ -266,4 +266,41 @@ python scripts/benchmark.py \
 
 Повтор той же команды после обрыва продолжает незавершённый предмет. Итог лежит в `rummlu_metrics.json`; основные W&B-поля: `rummlu/accuracy`, `rummlu/macro_subject_accuracy` и `rummlu/subject/*`.
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+### Public MERA Core benchmark
+
+Локальный suite включает `PARus`, `RCB`, `RWSD`, `ruOpenBookQA` и `ruWorldTree`. Закрытые MERA test labels не используются: для первых трёх задач берётся размеченный `validation`, для двух научных QA — публичный размеченный `train`. В 5-shot QA первые пять строк служат demonstrations и исключаются из оценки. Полный suite содержит 2 967 оцениваемых примеров и не является результатом закрытого MERA leaderboard.
+
+Smoke для IFD по 10 примеров на задачу:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=ifd_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/mera_core_smoke \
+  benchmark.max_samples_per_task=10
+```
+
+Полный MERA Core для IFD:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=ifd_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen15b_90k/benchmarks/mera_core
+```
+
+Полный MERA Core для random baseline:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=baseline_random_qwen15b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen15b_90k/benchmarks/mera_core
+```
+
+`mera_core/macro_task_accuracy` равноправно усредняет пять task accuracy; `mera_core/accuracy` считает micro-average по всем примерам и сильнее взвешивает большой `ruOpenBookQA`. Для сравнения стратегий основной агрегат — `macro_task_accuracy`; task-level accuracy и macro-F1 сохраняются отдельно. Повтор той же команды возобновляет незавершённые task-файлы.
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen15b_qlora.yaml`](configs/train/qwen15b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

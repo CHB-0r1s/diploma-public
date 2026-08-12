@@ -1,0 +1,14 @@
+name: mera_core
+dataset_name: ai-forever/MERA
+revision: null
+tasks:
+  - parus
+  - rcb
+  - rwsd
+  - ruopenbookqa
+  - ruworldtree
+batch_size: 2
+max_seq_len: 4096
+max_samples_per_task: null
+checkpoint_every: 100
+
