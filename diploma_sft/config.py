@@ -56,6 +56,8 @@ class TrainConfig:
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "cosine"
     logging_steps: int = 20
+    log_entropy: bool = True
+    entropy_chunk_size: int = 32
     save_steps: int = 200
     save_total_limit: int = 13
     packing: bool = True

@@ -38,6 +38,7 @@ from diploma_sft.runtime import (  # noqa: E402
     latest_checkpoint,
     require_bf16_cuda,
 )
+from diploma_sft.training_metrics import assistant_token_entropy  # noqa: E402
 from diploma_sft.wandb_utils import init_wandb, log_files_as_artifact  # noqa: E402
 
 
@@ -106,6 +107,70 @@ def main(cfg: DictConfig) -> None:
     from transformers import AutoTokenizer
     from trl import SFTConfig, SFTTrainer
 
+    class EntropyLoggingSFTTrainer(SFTTrainer):
+        """Attach assistant-token entropy to regular Trainer log events."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pending_entropy = None
+            self._last_entropy_step = None
+            self._entropy_target_step = None
+            self._entropy_weighted_sum = 0.0
+            self._entropy_token_count = 0
+
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            logging_steps = int(self.state.logging_steps or self.args.logging_steps)
+            next_step = int(self.state.global_step) + 1
+            collect_entropy = (
+                bool(cfg.train.log_entropy)
+                and model.training
+                and logging_steps > 0
+                and next_step % logging_steps == 0
+                and self._last_entropy_step != next_step
+                and inputs.get("labels") is not None
+            )
+            labels = inputs.get("labels")
+            result = super().compute_loss(
+                model,
+                inputs,
+                return_outputs=return_outputs or collect_entropy,
+                **kwargs,
+            )
+            if return_outputs or collect_entropy:
+                loss, outputs = result
+            else:
+                return result
+
+            if collect_entropy:
+                logits = getattr(outputs, "logits", None)
+                if logits is not None and logits.shape[-2] == labels.shape[-1]:
+                    entropy = assistant_token_entropy(
+                        logits,
+                        labels,
+                        chunk_size=int(cfg.train.entropy_chunk_size),
+                    )
+                    token_count = int((labels[..., 1:] != -100).sum().item())
+                    if self._entropy_target_step != next_step:
+                        self._entropy_target_step = next_step
+                        self._entropy_weighted_sum = 0.0
+                        self._entropy_token_count = 0
+                    if entropy is not None and token_count:
+                        self._entropy_weighted_sum += entropy * token_count
+                        self._entropy_token_count += token_count
+                if bool(getattr(self.accelerator, "sync_gradients", True)):
+                    if self._entropy_token_count:
+                        self._pending_entropy = (
+                            self._entropy_weighted_sum / self._entropy_token_count
+                        )
+                    self._last_entropy_step = next_step
+            return (loss, outputs) if return_outputs else loss
+
+        def log(self, logs, *args, **kwargs):
+            if "loss" in logs and self._pending_entropy is not None:
+                logs["entropy"] = self._pending_entropy
+                self._pending_entropy = None
+            return super().log(logs, *args, **kwargs)
+
     tokenizer_preview = get_chat_template(
         AutoTokenizer.from_pretrained(cfg.model.name),
         chat_template=cfg.model.chat_template,
@@ -164,7 +229,7 @@ def main(cfg: DictConfig) -> None:
     )
     training_args.packing = cfg.train.packing
 
-    trainer = SFTTrainer(
+    trainer = EntropyLoggingSFTTrainer(
         model=model,
         processing_class=tokenizer,
         args=training_args,

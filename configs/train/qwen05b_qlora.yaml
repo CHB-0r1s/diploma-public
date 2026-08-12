@@ -6,6 +6,8 @@ warmup_ratio: 0.03
 optim: adamw_8bit
 lr_scheduler_type: cosine
 logging_steps: 20
+log_entropy: true
+entropy_chunk_size: 32
 save_steps: 200
 save_total_limit: 13
 packing: true
