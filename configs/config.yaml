@@ -51,7 +51,7 @@ wandb:
   enabled: true
   project: diploma-sft
   entity: null
-  group: diploma-rerun
+  group: diploma-rerun-05
   tags:
     - qlora
     - qwen2.5
