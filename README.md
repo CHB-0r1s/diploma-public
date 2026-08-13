@@ -235,6 +235,34 @@ python scripts/evaluate.py \
   output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k
 ```
 
+### Entropy selection
+
+Entropy baseline ранжирует pool по средней энтропии распределения base-модели на всех assistant-response токенах внутри conversation и выбирает top-90k. Используется тот же `Qwen/Qwen2.5-0.5B`, ChatML и no-leak pool; длина ответа напрямую не суммируется, поскольку score усредняется по assistant-токенам. Скоринг резюмируется из `scores_entropy.npy`.
+
+Smoke:
+
+```bash
+python scripts/select_data.py \
+  selection=entropy \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.batch_size=2 \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/smoke_entropy_qwen05b_64
+```
+
+Полный отбор и обучение:
+
+```bash
+python scripts/select_data.py \
+  selection=entropy \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/entropy_qwen05b_90000
+
+python scripts/train.py \
+  experiment_name=entropy_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/entropy_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/entropy_qwen05b_90k
+```
+
 ### Public ruMMLU benchmark
 
 Это открытый набор [`gametwix/rummlu`](https://huggingface.co/datasets/gametwix/rummlu) из 10 033 переведённых и проверенных вопросов. Он подходит для одинакового воспроизводимого сравнения random и IFD adapters, но не равен закрытому ruMMLU test из MERA и не должен выдаваться за результат закрытого leaderboard.
@@ -323,4 +351,4 @@ python scripts/compare_benchmarks.py \
   --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/mera_core
 ```
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), entropy — в [`configs/selection/entropy.yaml`](configs/selection/entropy.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

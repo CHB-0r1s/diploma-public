@@ -3,6 +3,7 @@
 Examples:
     python scripts/select_data.py selection=random
     python scripts/select_data.py selection=ifd
+    python scripts/select_data.py selection=entropy
 """
 
 from __future__ import annotations
@@ -72,9 +73,12 @@ def _write_json(path: Path, payload) -> None:
         json.dump(payload, stream, indent=2, ensure_ascii=False)
 
 
-def _score_file_metadata(output_dir: Path) -> Dict[str, Dict[str, Any]]:
+def _score_file_metadata(
+    output_dir: Path,
+    filenames: Sequence[str],
+) -> Dict[str, Dict[str, Any]]:
     metadata = {}
-    for filename in ("scores_cond.npy", "scores_uncond.npy", "scores_ifd.npy"):
+    for filename in filenames:
         path = output_dir / filename
         metadata[filename] = {
             "file": filename,
@@ -191,7 +195,7 @@ def _ifd_selection(
         "ifd_threshold": float(cfg.selection.ifd_threshold),
         "checkpoint_every": int(cfg.selection.checkpoint_every),
         "scoring_protocol_sha256": cache_manifest["scoring_protocol_sha256"],
-        "score_files": _score_file_metadata(output_dir),
+        "score_files": _score_file_metadata(output_dir, cache_filenames),
         "score_statistics": stats,
     }
     extra_paths = [output_dir / "scoring_cache_manifest.json"] + [
@@ -206,11 +210,131 @@ def _ifd_selection(
     return selected_indices, selection_details, extra_paths, stats
 
 
+def _entropy_selection(
+    cfg: DictConfig,
+    dataset: Any,
+    dataset_identity: Dict[str, Any],
+    output_dir: Path,
+    environment: Dict[str, Any],
+) -> Tuple[np.ndarray, Dict[str, Any], List[Path], Dict[str, float]]:
+    require_bf16_cuda()
+
+    # Unsloth must patch Transformers before model/tokenizer loading.
+    from unsloth import FastLanguageModel  # noqa: I001
+    from unsloth.chat_templates import get_chat_template
+
+    from diploma_sft.entropy_selection import EntropySelector
+
+    layout = {
+        "shuffle_seed": int(cfg.seed),
+        "common_holdout_start": 0,
+        "common_holdout_size": int(cfg.dataset.common_val_holdout_size),
+        "pool_start": int(cfg.dataset.common_val_holdout_size),
+        "pool_size": int(cfg.selection.pool_size),
+    }
+    shuffled = dataset.shuffle(seed=layout["shuffle_seed"])
+    pool = shuffled.select(range(layout["pool_start"], layout["pool_start"] + layout["pool_size"]))
+    scorer_source = REPO_ROOT / "diploma_sft" / "entropy_selection.py"
+    scoring_protocol = {
+        "implementation": "mean-assistant-token-entropy-v1",
+        "implementation_sha256": sha256_file(scorer_source),
+        "dataset_resolved_revision": dataset_identity["resolved_revision"],
+        "dataset_fingerprint": dataset_identity["fingerprint"],
+        "pool_fingerprint": getattr(pool, "_fingerprint", None),
+        "layout": layout,
+        "conversation_column": cfg.dataset.conversation_column,
+        "scorer_model": cfg.selection.scorer_model,
+        "chat_template": cfg.model.chat_template,
+        "max_seq_len": int(cfg.model.max_seq_len),
+        "load_in_4bit": bool(cfg.model.load_in_4bit),
+        "batch_size": int(cfg.selection.batch_size),
+        "aggregation": "mean over all assistant response tokens",
+        "packages": {
+            name: environment["packages"].get(name)
+            for name in ("torch", "transformers", "unsloth", "numpy")
+        },
+    }
+    cache_filenames = ("scores_entropy.npy",)
+
+    scorer, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=cfg.selection.scorer_model,
+        max_seq_length=cfg.model.max_seq_len,
+        load_in_4bit=cfg.model.load_in_4bit,
+    )
+    resolved_model_name = getattr(scorer.config, "_name_or_path", None)
+    resolved_model_commit = getattr(scorer.config, "_commit_hash", None)
+    if resolved_model_name and not resolved_model_commit:
+        from huggingface_hub import HfApi
+
+        resolved_model_commit = HfApi().model_info(repo_id=resolved_model_name).sha
+    if not resolved_model_name or not resolved_model_commit:
+        raise RuntimeError("Could not resolve the scorer model to an immutable Hugging Face commit")
+    scoring_protocol["resolved_scorer_model"] = {
+        "name_or_path": resolved_model_name,
+        "commit_hash": resolved_model_commit,
+    }
+    cache_manifest = prepare_scoring_cache_manifest(
+        output_dir,
+        scoring_protocol=scoring_protocol,
+        cache_filenames=cache_filenames,
+    )
+    FastLanguageModel.for_inference(scorer)
+    tokenizer = get_chat_template(tokenizer, chat_template=cfg.model.chat_template)
+    tokenizer.padding_side = "right"
+
+    selector = EntropySelector(
+        scorer,
+        tokenizer,
+        max_seq_len=cfg.model.max_seq_len,
+        batch_size=cfg.selection.batch_size,
+        cache_dir=str(output_dir),
+        checkpoint_every=cfg.selection.checkpoint_every,
+    )
+    conversations = DatasetColumnView(pool, cfg.dataset.conversation_column)
+    scores = selector.score(conversations)
+    selected_indices = selector.select(scores, k=cfg.selection.subsample_size)
+
+    valid = scores[np.isfinite(scores)]
+    selected_scores = scores[selected_indices]
+    stats = {
+        "valid_scores": int(len(valid)),
+        "nan_scores": int(np.isnan(scores).sum()),
+        "entropy_min": float(valid.min()),
+        "entropy_mean": float(valid.mean()),
+        "entropy_median": float(np.median(valid)),
+        "entropy_max": float(valid.max()),
+        "selected_entropy_min": float(selected_scores.min()),
+        "selected_entropy_mean": float(selected_scores.mean()),
+        "selected_entropy_max": float(selected_scores.max()),
+    }
+    selection_details = {
+        "scorer_model": cfg.selection.scorer_model,
+        "batch_size": int(cfg.selection.batch_size),
+        "checkpoint_every": int(cfg.selection.checkpoint_every),
+        "aggregation": "mean over all assistant response tokens",
+        "scoring_protocol_sha256": cache_manifest["scoring_protocol_sha256"],
+        "score_files": _score_file_metadata(output_dir, cache_filenames),
+        "score_statistics": stats,
+    }
+    extra_paths = [
+        output_dir / "scoring_cache_manifest.json",
+        output_dir / "scores_entropy.npy",
+    ]
+
+    del selector, scorer, tokenizer
+    gc.collect()
+    import torch
+
+    torch.cuda.empty_cache()
+    return selected_indices, selection_details, extra_paths, stats
+
+
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
-    if cfg.selection.method not in {"random", "ifd"}:
+    if cfg.selection.method not in {"random", "ifd", "entropy"}:
         raise NotImplementedError(
-            f"selection.method={cfg.selection.method!r} is not implemented; use random or ifd"
+            f"selection.method={cfg.selection.method!r} is not implemented; "
+            "use random, ifd, or entropy"
         )
 
     from datasets import load_dataset
@@ -259,8 +383,16 @@ def main(cfg: DictConfig) -> None:
             selected_count=cfg.selection.subsample_size,
             seed=cfg.selection.seed,
         )
-    else:
+    elif cfg.selection.method == "ifd":
         selected_indices, selection_details, extra_paths, selection_metrics = _ifd_selection(
+            cfg,
+            dataset,
+            identity,
+            output_dir,
+            environment,
+        )
+    else:
+        selected_indices, selection_details, extra_paths, selection_metrics = _entropy_selection(
             cfg,
             dataset,
             identity,
