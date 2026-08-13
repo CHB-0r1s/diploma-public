@@ -307,4 +307,20 @@ python scripts/benchmark.py \
 
 `mera_core/macro_task_accuracy` равноправно усредняет пять task accuracy; `mera_core/accuracy` считает micro-average по всем примерам и сильнее взвешивает большой `ruOpenBookQA`. Для сравнения стратегий основной агрегат — `macro_task_accuracy`; task-level accuracy и macro-F1 сохраняются отдельно. Повтор той же команды возобновляет незавершённые task-файлы.
 
+### Paired-анализ benchmark-предсказаний
+
+После двух полных прогонов `scripts/compare_benchmarks.py` выравнивает предсказания по предмету/task и исходному индексу. Отчёт содержит пары `оба верно`, `только baseline`, `только candidate`, `оба неверно`, exact McNemar test и paired bootstrap 95% CI для разницы accuracy. Все вопросы, на которых правильность моделей различается, сохраняются отдельно в `disagreements.jsonl` вместе с ответами и log-likelihood вариантов.
+
+```bash
+python scripts/compare_benchmarks.py \
+  --baseline-dir /content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/rummlu \
+  --candidate-dir /content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu \
+  --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/rummlu
+
+python scripts/compare_benchmarks.py \
+  --baseline-dir /content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/mera_core \
+  --candidate-dir /content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core \
+  --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/mera_core
+```
+
 Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
