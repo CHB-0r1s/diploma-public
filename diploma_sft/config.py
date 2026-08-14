@@ -75,6 +75,16 @@ class SelectionConfig:
     batch_size: int = 8
     ifd_threshold: float = 1.0
     checkpoint_every: int = 10_000
+    rho_holdout_size: int = 30_000
+    rho_holdout_val_fraction: float = 0.05
+    rho_il_max_steps: int = 300
+    rho_il_eval_steps: int = 100
+    rho_il_save_steps: int = 100
+    rho_il_warmup_steps: int = 30
+    rho_il_lora_r: int = 8
+    rho_il_lora_alpha: int = 8
+    rho_il_lora_dropout: float = 0.1
+    rho_il_seed: int = 43
 
 
 @dataclass

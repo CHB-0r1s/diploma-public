@@ -39,13 +39,14 @@ flowchart TD
 flowchart LR
     subgraph FULL["ds_full (shuffle, seed=SEED)"]
         V["Common val<br/>0 .. 4500<br/>резервируется первым"]
-        POOL["Selection pool<br/>~200k, no-leak"]
+        POOL["Selection pool<br/>следующие 200k, no-leak"]
+        DHO["RHO D_ho<br/>следующие 30k"]
     end
-    POOL --> DHO["D_ho<br/>обучение proxy IL-модели<br/>(только для RHO)"]
-    POOL --> DPOOL["D_pool<br/>скоринг и отбор top-90k<br/>(disjoint с D_ho)"]
+    DHO --> IL["Обучение proxy IL-модели<br/>(только для RHO)"]
+    POOL --> DPOOL["Общий D_pool<br/>скоринг и отбор top-90k"]
 ```
 
-`D_ho` и `D_pool` используются в `selection_loss_rho.ipynb`; для остальных стратегий скоринг идёт напрямую по selection pool. Common-val примеры недоступны для скоринга и отбора во всех стратегиях.
+В новом runner RHO использует тот же 200k selection pool, что random, IFD и entropy. Его `D_ho` — отдельные 30k строк сразу после pool; он не пересекается ни с candidate pool, ни с common val. Историческая тетрадка использовала другое внутреннее разбиение и сохранена только как архив исходного эксперимента.
 
 ## Общий протокол
 
@@ -263,6 +264,40 @@ python scripts/train.py \
   output_dir=/content/drive/MyDrive/diploma/outputs/entropy_qwen05b_90k
 ```
 
+### RHO-Loss selection
+
+RHO оценивает reducible assistant-only loss: `L_base - L_IL`. Proxy IL-модель обучается 300 шагов на отдельном `D_ho` из 30k строк, следующем после общего 200k candidate pool. Лучший IL checkpoint выбирается по assistant-masked eval loss на фиксированных 5% `D_ho`; затем base и IL одинаково скорят все 200k кандидатов. Обучение IL и оба scorer cache привязаны к одному protocol SHA.
+
+Smoke проверяет весь pipeline на маленьких disjoint pool и holdout:
+
+```bash
+python scripts/select_data.py \
+  selection=rho \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.rho_holdout_size=128 \
+  selection.rho_il_max_steps=5 \
+  selection.rho_il_eval_steps=5 \
+  selection.rho_il_save_steps=5 \
+  selection.batch_size=2 \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/smoke_rho_qwen05b_64
+```
+
+Полный RHO-отбор и target training:
+
+```bash
+python scripts/select_data.py \
+  selection=rho \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/rho_qwen05b_90000
+
+python scripts/train.py \
+  experiment_name=rho_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/rho_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/rho_qwen05b_90k
+```
+
+Повтор selection-команды продолжает IL checkpoint или недосчитанные `scores_base.npy` и `scores_il.npy`. Готовый IL adapter переиспользуется только при совпадении protocol SHA.
+
 ### Public ruMMLU benchmark
 
 Это открытый набор [`gametwix/rummlu`](https://huggingface.co/datasets/gametwix/rummlu) из 10 033 переведённых и проверенных вопросов. Он подходит для одинакового воспроизводимого сравнения random и IFD adapters, но не равен закрытому ruMMLU test из MERA и не должен выдаваться за результат закрытого leaderboard.
@@ -351,4 +386,4 @@ python scripts/compare_benchmarks.py \
   --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/mera_core
 ```
 
-Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), entropy — в [`configs/selection/entropy.yaml`](configs/selection/entropy.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), entropy — в [`configs/selection/entropy.yaml`](configs/selection/entropy.yaml), RHO — в [`configs/selection/rho.yaml`](configs/selection/rho.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.
