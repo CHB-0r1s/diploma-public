@@ -279,6 +279,7 @@ python scripts/select_data.py \
   selection.rho_il_max_steps=5 \
   selection.rho_il_eval_steps=5 \
   selection.rho_il_save_steps=5 \
+  selection.rho_il_warmup_steps=1 \
   selection.batch_size=2 \
   selection_output_dir=/content/drive/MyDrive/diploma/selections/smoke_rho_qwen05b_64
 ```
