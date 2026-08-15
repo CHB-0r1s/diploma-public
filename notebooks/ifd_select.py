@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -64,7 +65,7 @@ class IFDSelector:
     ifd_threshold: float = 1.0
     assistant_marker: str = "<|im_start|>assistant\n"
     user_marker: str = "<|im_start|>user\n"
-    cache_dir: str | None = None
+    cache_dir: Optional[str] = None
     checkpoint_every: int = 10_000
 
     def __post_init__(self):
@@ -80,7 +81,7 @@ class IFDSelector:
 
     # ------------------------------------------------------------------ scoring
 
-    def score(self, conversations: list[Conversation]) -> np.ndarray:
+    def score(self, conversations: Sequence[Conversation]) -> np.ndarray:
         """IFD-скор на каждый пример. Резюмируется из cache_dir, если задан.
 
         Возвращает np.array длины len(conversations); NaN там, где ответ не найден
@@ -123,12 +124,12 @@ class IFDSelector:
                 pbar.update(len(idx))
             since_save += len(idx)
             if path and since_save >= self.checkpoint_every:
-                np.save(path, scores)
+                self._atomic_save(path, scores)
                 since_save = 0
         if hasattr(pbar, "close"):
             pbar.close()
         if path:
-            np.save(path, scores)
+            self._atomic_save(path, scores)
         nan_n = int(np.isnan(scores).sum())
         print(f"IFD {mode}: готово. NaN {nan_n}/{n} ({100 * nan_n / max(n, 1):.2f}%)")
         return scores
@@ -161,7 +162,6 @@ class IFDSelector:
         enc = {k: v.to(self.model.device) for k, v in enc.items()}
 
         logits = self.model(**enc).logits
-        log_probs = F.log_softmax(logits.float(), dim=-1)
 
         results = []
         for b in range(len(conversations)):
@@ -172,14 +172,18 @@ class IFDSelector:
                 results.append(float("nan"))
                 continue
             pos_list = sorted(positions)
-            targets = torch.tensor([ids[p + 1] for p in pos_list], device=log_probs.device)
-            pos_t = torch.tensor(pos_list, device=log_probs.device)
-            nll = -log_probs[b, pos_t, targets]
-            results.append(float(np.exp(nll.mean().item())))
+            targets = torch.tensor([ids[p + 1] for p in pos_list], device=logits.device)
+            pos_t = torch.tensor(pos_list, device=logits.device)
+            mean_nll = F.cross_entropy(
+                logits[b, pos_t].float(),
+                targets,
+                reduction="mean",
+            )
+            results.append(float(np.exp(mean_nll.item())))
         return results
 
     def _assistant_positions(self, ids: list[int], valid_len: int) -> set[int]:
-        """Позиции (индексы логитов) для предсказания assistant-токенов.
+        """Позиции логитов для предсказания последнего assistant-ответа.
 
         Для assistant-сегмента [start, end) целевые токены — ids[start..end),
         а логиты, их предсказывающие, стоят на позициях k-1.
@@ -189,6 +193,7 @@ class IFDSelector:
         i = 0
         while i < valid_len:
             if ids[i : i + len(asst)] == asst:
+                positions = set()
                 start = i + len(asst)
                 end = valid_len
                 for j in range(start, valid_len - len(user) + 1):
@@ -235,24 +240,31 @@ class IFDSelector:
         top_local = np.argsort(-scores[cand])[:k]  # top-K по убыванию IFD
         return np.sort(cand[top_local])
 
-    def fit_select(self, conversations: list[Conversation], k: int) -> np.ndarray:
+    def fit_select(self, conversations: Sequence[Conversation], k: int) -> np.ndarray:
         """score() + select() одним вызовом."""
         return self.select(self.score(conversations), k)
 
     # ------------------------------------------------------------------- cache
 
-    def _path(self, name: str) -> str | None:
+    def _path(self, name: str) -> Optional[str]:
         return os.path.join(self.cache_dir, name) if self.cache_dir else None
 
     def _save(self, name: str, arr: np.ndarray) -> None:
         path = self._path(name)
         if path:
-            np.save(path, arr)
+            self._atomic_save(path, arr)
+
+    @staticmethod
+    def _atomic_save(path: str, arr: np.ndarray) -> None:
+        temporary = f"{path}.tmp"
+        with open(temporary, "wb") as stream:
+            np.save(stream, arr, allow_pickle=False)
+        os.replace(temporary, path)
 
     def _load_partial(self, name: str, n: int) -> np.ndarray:
         path = self._path(name)
         if path and os.path.exists(path):
-            scores = np.load(path)
+            scores = np.load(path, allow_pickle=False)
             if len(scores) != n:
                 raise RuntimeError(
                     f"Размер кеша {path} ({len(scores)}) != {n}. Удали файл для пересчёта."

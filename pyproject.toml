@@ -26,6 +26,15 @@ dependencies = [
 
 [project.optional-dependencies]
 progress = ["tqdm>=4.65"]
+experiments = [
+    "datasets>=3.0",
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "peft>=0.13",
+    "transformers>=4.45",
+    "trl>=0.16",
+    "wandb>=0.17",
+]
 dev = ["ruff>=0.5", "build>=1.2", "nbformat>=5.9", "pytest>=7.4"]
 
 [project.urls]
@@ -33,8 +42,9 @@ Homepage = "https://github.com/CHB-0r1s/diploma-public"
 Repository = "https://github.com/CHB-0r1s/diploma-public"
 
 [tool.setuptools]
-package-dir = { "" = "notebooks" }
+package-dir = { "" = "notebooks", "diploma_sft" = "diploma_sft" }
 py-modules = ["ifd_select"]
+packages = ["diploma_sft"]
 
 [tool.ruff]
 line-length = 100
@@ -45,7 +55,7 @@ select = ["E", "F", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ifd_select"]
+known-first-party = ["diploma_sft", "ifd_select"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

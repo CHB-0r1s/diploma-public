@@ -1,0 +1,9 @@
+name: rummlu
+dataset_name: gametwix/rummlu
+revision: null
+num_fewshot: 5
+batch_size: 2
+max_seq_len: 4096
+max_samples_per_subject: null
+subjects: null
+checkpoint_every: 100

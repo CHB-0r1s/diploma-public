@@ -1,0 +1,60 @@
+defaults:
+  - selection: random
+  - train: qwen05b_qlora
+  - benchmark: rummlu
+  - _self_
+
+experiment_name: baseline_random_qwen05b_90k
+seed: 42
+output_dir: outputs/${experiment_name}
+selection_output_dir: selections/${selection.method}${selection.artifact_suffix}_${selection.subsample_size}
+selection_artifact: null
+adapter_path: null
+evaluation_output_dir: ${output_dir}/evaluation
+benchmark_output_dir: ${output_dir}/benchmarks/${benchmark.name}
+debug: false
+max_steps: -1
+resume_from_checkpoint: auto
+
+dataset:
+  name: d0rj/ru-instruct
+  split: train
+  revision: null
+  conversation_column: conversations
+  common_val_holdout_size: 4500
+  common_eval_samples: 4500
+  train_audit_samples: 1000
+  train_audit_seed: 42
+
+model:
+  name: Qwen/Qwen2.5-0.5B
+  chat_template: qwen-2.5
+  eos_token: <|im_end|>
+  max_seq_len: 2048
+  load_in_4bit: true
+
+lora:
+  r: 16
+  alpha: 16
+  dropout: 0.0
+  bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+wandb:
+  enabled: true
+  project: diploma-sft
+  entity: null
+  group: diploma-rerun-05
+  tags:
+    - qlora
+    - qwen2.5
+    - reproducible-rerun
+  mode: null
+  log_model: false

@@ -1,5 +1,7 @@
 # Публичные тетрадки дипломного эксперимента
 
+> Для продолжения и запуска текущего воспроизводимого pipeline используйте [`docs/EXPERIMENT_RUNBOOK.md`](docs/EXPERIMENT_RUNBOOK.md). Обязательные правила для coding agents находятся в [`AGENTS.md`](AGENTS.md).
+
 [![CI](https://github.com/CHB-0r1s/diploma-public/actions/workflows/ci.yml/badge.svg)](https://github.com/CHB-0r1s/diploma-public/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
@@ -27,7 +29,7 @@ flowchart TD
     E3 --> F
     E4 --> F
     E5 --> F
-    F --> G["QLoRA SFT<br/>Qwen2.5-1.5B<br/>masked, packed, 1 epoch"]
+    F --> G["QLoRA SFT<br/>Qwen2.5-0.5B<br/>masked, packed, 1 epoch"]
     G --> H["Adapters"]
     H --> I["Оценка ru-mt-bench<br/>официальный FastChat judge"]
     B -.->|no leak| I
@@ -39,17 +41,18 @@ flowchart TD
 flowchart LR
     subgraph FULL["ds_full (shuffle, seed=SEED)"]
         V["Common val<br/>0 .. 4500<br/>резервируется первым"]
-        POOL["Selection pool<br/>~200k, no-leak"]
+        POOL["Selection pool<br/>следующие 200k, no-leak"]
+        DHO["RHO D_ho<br/>следующие 30k"]
     end
-    POOL --> DHO["D_ho<br/>обучение proxy IL-модели<br/>(только для RHO)"]
-    POOL --> DPOOL["D_pool<br/>скоринг и отбор top-90k<br/>(disjoint с D_ho)"]
+    DHO --> IL["Обучение proxy IL-модели<br/>(только для RHO)"]
+    POOL --> DPOOL["Общий D_pool<br/>скоринг и отбор top-90k"]
 ```
 
-`D_ho` и `D_pool` используются в `selection_loss_rho.ipynb`; для остальных стратегий скоринг идёт напрямую по selection pool. Common-val примеры недоступны для скоринга и отбора во всех стратегиях.
+В новом runner RHO использует тот же 200k selection pool, что random, IFD и entropy. Его `D_ho` — отдельные 30k строк сразу после pool; он не пересекается ни с candidate pool, ни с common val. Историческая тетрадка использовала другое внутреннее разбиение и сохранена только как архив исходного эксперимента.
 
 ## Общий протокол
 
-- Базовая модель target-обучения: `Qwen/Qwen2.5-1.5B`.
+- Базовая модель target-обучения: `Qwen/Qwen2.5-0.5B`.
 - Обучение: QLoRA, assistant-only masked loss, packing, `SUBSAMPLE_SIZE = 90_000`, `NUM_EPOCHS = 1`.
 - Precision: только bf16; если bf16 недоступен, тетрадки должны останавливаться без fallback на fp16.
 - Chat template: явно фиксируется Qwen2.5 ChatML через `get_chat_template(..., "qwen-2.5")`; не используется неявный stock `apply_chat_template`.
@@ -61,7 +64,7 @@ flowchart LR
 
 | Параметр | Значение |
 |----------|----------|
-| Base model | `Qwen/Qwen2.5-1.5B` |
+| Base model | `Qwen/Qwen2.5-0.5B` |
 | Метод обучения | QLoRA, assistant-only masked loss, packing |
 | `SUBSAMPLE_SIZE` | 90 000 |
 | `NUM_EPOCHS` | 1 |
@@ -82,6 +85,8 @@ flowchart LR
 | 5 | Quality classifier | `selection_quality_classifier` | оценка Qwen2.5-0.5B scorer'а | top-90k по quality | обучен на Claude-labeled 3k subset |
 
 ## Тетрадки
+
+Тетрадки ниже сохраняют исторические 1.5B-прогоны и их исходные параметры. Основной воспроизводимый перепрогон теперь выполняется через `scripts/*.py` с `Qwen/Qwen2.5-0.5B`; его команды приведены в разделе «Экспериментальный pipeline».
 
 Запускать в таком порядке:
 
@@ -121,7 +126,267 @@ flowchart LR
 ```bash
 pip install -e ".[dev]"     # ruff, pytest, build, nbformat
 ruff check notebooks/ifd_select.py tests/
-pytest -q                   # 15 тестов
+pytest -q                   # 35 тестов
 ```
 
 CI/CD ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push/PR в `main` прогоняет на Python 3.9–3.12: `ruff` → byte-compile → `nbformat`-валидацию тетрадок → `pytest` → `build` пакета. Статус — бейдж **CI** в шапке.
+
+## Экспериментальный pipeline
+
+Новый эталонный перепрогон разделён на четыре независимые W&B job type:
+
+```text
+select -> versioned selection artifact -> train -> LoRA adapter -> evaluate + benchmark
+```
+
+Метод отбора выбирается только в `scripts/select_data.py`. `scripts/train.py` не знает, как были получены индексы: он проверяет artifact и обучается на всех 90 000 выбранных примерах без собственного 95/5 split и без выбора best checkpoint по method-dependent val. `scripts/evaluate.py` одинаково считает assistant-only loss/PPL на общем no-leak holdout и на фиксированной выборке из 1000 train-примеров. Разность этих метрик сохраняется как `generalization_gap`.
+
+`scripts/benchmark.py` независимо запускает внешний public ruMMLU: 57 предметов, 5-shot prompt и accuracy по log-likelihood вариантов `A/B/C/D`. Результаты сохраняются целиком и по предметам, отправляются в W&B и возобновляются с последнего записанного предметного файла.
+
+Selection artifact содержит точный Hugging Face dataset commit, fingerprint, границы common holdout и общего 200k pool, seed, pool-relative индексы и SHA256. IFD дополнительно сохраняет скоры, их SHA256 и протокол с фактически загруженным commit scorer-модели; прерванный скоринг продолжается при повторе той же команды. Все стадии сохраняют resolved Hydra config и environment snapshot. Training по умолчанию автоматически продолжает последний `checkpoint-*` из output directory.
+
+Новые training-run'ы сохраняют checkpoint каждые 200 optimizer steps и держат не более 13 последних (`save_steps: 200`, `save_total_limit: 13`). Финальный adapter сохраняется отдельно. Это не означает автоматический выбор лучшего checkpoint: основной результат по-прежнему фиксирован как модель после полного бюджета в одну эпоху.
+
+Во время обучения раз в `logging_steps` отдельным `no_grad` forward считается средняя entropy распределения следующего токена по всему effective optimizer batch, но только на supervised assistant-позициях. Через Qwen2 `logits_to_keep` запрашиваются только нужные sequence-позиции, а основной training forward сохраняет Unsloth fused cross-entropy. Метрика логируется в W&B как `train/entropy` в nats; prompt-токены с label `-100` не учитываются.
+
+Установка:
+
+```bash
+pip install unsloth
+pip install -e ".[experiments]"
+wandb login
+```
+
+### Smoke pipeline
+
+```bash
+python scripts/select_data.py \
+  selection=random \
+  selection.pool_size=1024 \
+  selection.subsample_size=128 \
+  selection_output_dir=selections/smoke_random_128
+
+python scripts/train.py \
+  experiment_name=smoke_random_qwen05b \
+  selection_artifact=selections/smoke_random_128/selection_manifest.json \
+  output_dir=outputs/smoke_random_qwen05b \
+  max_steps=5
+
+python scripts/evaluate.py \
+  experiment_name=smoke_random_qwen05b \
+  selection_artifact=selections/smoke_random_128/selection_manifest.json \
+  adapter_path=outputs/smoke_random_qwen05b/adapter \
+  output_dir=outputs/smoke_random_qwen05b \
+  dataset.common_eval_samples=16 \
+  dataset.train_audit_samples=16
+```
+
+### Полный random baseline
+
+```bash
+python scripts/select_data.py \
+  selection=random \
+  selection_output_dir=selections/random_90000
+
+python scripts/train.py \
+  experiment_name=baseline_random_qwen05b_90k \
+  selection_artifact=selections/random_90000/selection_manifest.json \
+  output_dir=outputs/baseline_random_qwen05b_90k
+
+python scripts/evaluate.py \
+  experiment_name=baseline_random_qwen05b_90k \
+  selection_artifact=selections/random_90000/selection_manifest.json \
+  adapter_path=outputs/baseline_random_qwen05b_90k/adapter \
+  output_dir=outputs/baseline_random_qwen05b_90k
+```
+
+### IFD после random baseline
+
+Сначала короткий сквозной smoke. Для него нужен CUDA GPU с bf16:
+
+```bash
+python scripts/select_data.py \
+  selection=ifd \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.batch_size=2 \
+  selection_output_dir=selections/smoke_ifd_qwen05b_64
+```
+
+Если smoke завершился и в W&B появились selection-метрики, запускается полный скоринг 200k и отбор 90k:
+
+```bash
+python scripts/select_data.py \
+  selection=ifd \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000
+```
+
+Повтор этой же команды с тем же `selection_output_dir` продолжает недосчитанные `scores_cond.npy` и `scores_uncond.npy`. Менять модель, dataset revision, pool, batch или реализацию при существующем кеше запрещено проверкой `scoring_cache_manifest.json`.
+
+После появления `selection_manifest.json` обучение и оценка идут тем же протоколом, что random:
+
+```bash
+python scripts/train.py \
+  experiment_name=ifd_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k
+
+python scripts/evaluate.py \
+  experiment_name=ifd_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/ifd_qwen05b_90000/selection_manifest.json \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k
+```
+
+### Entropy selection
+
+Entropy baseline ранжирует pool по средней энтропии распределения base-модели на всех assistant-response токенах внутри conversation и выбирает top-90k. Используется тот же `Qwen/Qwen2.5-0.5B`, ChatML и no-leak pool; длина ответа напрямую не суммируется, поскольку score усредняется по assistant-токенам. Скоринг резюмируется из `scores_entropy.npy`.
+
+Smoke:
+
+```bash
+python scripts/select_data.py \
+  selection=entropy \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.batch_size=2 \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/smoke_entropy_qwen05b_64
+```
+
+Полный отбор и обучение:
+
+```bash
+python scripts/select_data.py \
+  selection=entropy \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/entropy_qwen05b_90000
+
+python scripts/train.py \
+  experiment_name=entropy_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/entropy_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/entropy_qwen05b_90k
+```
+
+### RHO-Loss selection
+
+RHO оценивает reducible assistant-only loss: `L_base - L_IL`. Proxy IL-модель обучается 300 шагов на отдельном `D_ho` из 30k строк, следующем после общего 200k candidate pool. Лучший IL checkpoint выбирается по assistant-masked eval loss на фиксированных 5% `D_ho`; затем base и IL одинаково скорят все 200k кандидатов. Обучение IL и оба scorer cache привязаны к одному protocol SHA.
+
+Smoke проверяет весь pipeline на маленьких disjoint pool и holdout:
+
+```bash
+python scripts/select_data.py \
+  selection=rho \
+  selection.pool_size=256 \
+  selection.subsample_size=64 \
+  selection.rho_holdout_size=128 \
+  selection.rho_il_max_steps=5 \
+  selection.rho_il_eval_steps=5 \
+  selection.rho_il_save_steps=5 \
+  selection.rho_il_warmup_steps=1 \
+  selection.batch_size=2 \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/smoke_rho_qwen05b_64
+```
+
+Полный RHO-отбор и target training:
+
+```bash
+python scripts/select_data.py \
+  selection=rho \
+  selection_output_dir=/content/drive/MyDrive/diploma/selections/rho_qwen05b_90000
+
+python scripts/train.py \
+  experiment_name=rho_qwen05b_90k \
+  selection_artifact=/content/drive/MyDrive/diploma/selections/rho_qwen05b_90000/selection_manifest.json \
+  output_dir=/content/drive/MyDrive/diploma/outputs/rho_qwen05b_90k
+```
+
+Повтор selection-команды продолжает IL checkpoint или недосчитанные `scores_base.npy` и `scores_il.npy`. Готовый IL adapter переиспользуется только при совпадении protocol SHA.
+
+### Public ruMMLU benchmark
+
+Это открытый набор [`gametwix/rummlu`](https://huggingface.co/datasets/gametwix/rummlu) из 10 033 переведённых и проверенных вопросов. Он подходит для одинакового воспроизводимого сравнения random и IFD adapters, но не равен закрытому ruMMLU test из MERA и не должен выдаваться за результат закрытого leaderboard.
+
+Сначала smoke на одном предмете и 10 вопросах:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu_smoke \
+  'benchmark.subjects=[abstract_algebra]' \
+  benchmark.max_samples_per_subject=10
+```
+
+Полный benchmark для IFD:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu
+```
+
+Для random baseline меняются только experiment и adapter/output paths:
+
+```bash
+python scripts/benchmark.py \
+  experiment_name=baseline_random_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/rummlu
+```
+
+Повтор той же команды после обрыва продолжает незавершённый предмет. Итог лежит в `rummlu_metrics.json`; основные W&B-поля: `rummlu/accuracy`, `rummlu/macro_subject_accuracy` и `rummlu/subject/*`.
+
+### Public MERA Core benchmark
+
+Локальный suite включает `PARus`, `RCB`, `RWSD`, `ruOpenBookQA` и `ruWorldTree`. Закрытые MERA test labels не используются: для первых трёх задач берётся размеченный `validation`, для двух научных QA — публичный размеченный `train`. В 5-shot QA первые пять строк служат demonstrations и исключаются из оценки. Полный suite содержит 2 967 оцениваемых примеров и не является результатом закрытого MERA leaderboard.
+
+Smoke для IFD по 10 примеров на задачу:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core_smoke \
+  benchmark.max_samples_per_task=10
+```
+
+Полный MERA Core для IFD:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=ifd_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core
+```
+
+Полный MERA Core для random baseline:
+
+```bash
+python scripts/benchmark.py \
+  benchmark=mera_core \
+  experiment_name=baseline_random_qwen05b_90k \
+  adapter_path=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/adapter \
+  benchmark_output_dir=/content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/mera_core
+```
+
+`mera_core/macro_task_accuracy` равноправно усредняет пять task accuracy; `mera_core/accuracy` считает micro-average по всем примерам и сильнее взвешивает большой `ruOpenBookQA`. Для сравнения стратегий основной агрегат — `macro_task_accuracy`; task-level accuracy и macro-F1 сохраняются отдельно. Повтор той же команды возобновляет незавершённые task-файлы.
+
+### Paired-анализ benchmark-предсказаний
+
+После двух полных прогонов `scripts/compare_benchmarks.py` выравнивает предсказания по предмету/task и исходному индексу. Отчёт содержит пары `оба верно`, `только baseline`, `только candidate`, `оба неверно`, exact McNemar test и paired bootstrap 95% CI для разницы accuracy. Все вопросы, на которых правильность моделей различается, сохраняются отдельно в `disagreements.jsonl` вместе с ответами и log-likelihood вариантов.
+
+```bash
+python scripts/compare_benchmarks.py \
+  --baseline-dir /content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/rummlu \
+  --candidate-dir /content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/rummlu \
+  --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/rummlu
+
+python scripts/compare_benchmarks.py \
+  --baseline-dir /content/drive/MyDrive/diploma/outputs/baseline_random_qwen05b_90k/benchmarks/mera_core \
+  --candidate-dir /content/drive/MyDrive/diploma/outputs/ifd_qwen05b_90k/benchmarks/mera_core \
+  --output-dir /content/drive/MyDrive/diploma/comparisons/qwen05b_random_vs_ifd/mera_core
+```
+
+Базовый конфиг лежит в [`configs/config.yaml`](configs/config.yaml); random selection — в [`configs/selection/random.yaml`](configs/selection/random.yaml), IFD — в [`configs/selection/ifd.yaml`](configs/selection/ifd.yaml), entropy — в [`configs/selection/entropy.yaml`](configs/selection/entropy.yaml), RHO — в [`configs/selection/rho.yaml`](configs/selection/rho.yaml), QLoRA — в [`configs/train/qwen05b_qlora.yaml`](configs/train/qwen05b_qlora.yaml), ruMMLU — в [`configs/benchmark/rummlu.yaml`](configs/benchmark/rummlu.yaml), MERA Core — в [`configs/benchmark/mera_core.yaml`](configs/benchmark/mera_core.yaml). Старые notebook-run'ы с внутренним split `85.5k train + 4.5k own val` остаются историческими; новый сравнительный протокол использует все выбранные 90k для target training и один внешний common holdout после обучения.

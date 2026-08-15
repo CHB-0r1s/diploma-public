@@ -1,0 +1,5 @@
+method: random
+artifact_suffix: ""
+subsample_size: 90000
+pool_size: 200000
+seed: 42
