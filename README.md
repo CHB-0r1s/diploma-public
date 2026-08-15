@@ -1,5 +1,7 @@
 # Публичные тетрадки дипломного эксперимента
 
+> Для продолжения и запуска текущего воспроизводимого pipeline используйте [`docs/EXPERIMENT_RUNBOOK.md`](docs/EXPERIMENT_RUNBOOK.md). Обязательные правила для coding agents находятся в [`AGENTS.md`](AGENTS.md).
+
 [![CI](https://github.com/CHB-0r1s/diploma-public/actions/workflows/ci.yml/badge.svg)](https://github.com/CHB-0r1s/diploma-public/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
